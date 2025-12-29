@@ -1,0 +1,51 @@
+# macOS hidden files
+.DS_Store
+**/.DS_Store
+
+# Windows hidden files
+Thumbs.db
+Desktop.ini
+
+# Editor/IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Node.js (if used in future)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build artifacts
+dist/
+build/
+*.min.js
+*.min.css
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+*~
+temp_*
+_tmp_*
+
+# Log files
+*.log
+*.log.*
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Cache files
+.cache/
+*.cache
+
