@@ -9,6 +9,8 @@ let currentVariations = {}; // Track axis values per column: { columnIndex: { "w
 let activeFeatures = {}; // Track active features per column: { columnIndex: Set(['liga', 'kern']) }
 let viewMode = localStorage.getItem('fontAnalyzer_viewMode') || 'column'; // 'column', 'gallery', or 'horizontal'
 let horizontalMetadataFields = JSON.parse(localStorage.getItem('fontAnalyzer_horizontalFields') || '["family", "subfamily", "glyphs", "weightClass", "format", "size"]');
+let lastDirectoryHandle = null;
+let familyOrder = []; // Custom order for family groups
 
 // OpenType feature descriptions
 const FEATURE_DESCRIPTIONS = {
@@ -450,6 +452,67 @@ async function showBrowseMenu(event) {
     });
 }
 
+// IndexedDB functions for directory handle persistence
+function openDB() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open('FontAnalyzerDB', 1);
+        
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve(request.result);
+        
+        request.onupgradeneeded = (event) => {
+            const db = event.target.result;
+            if (!db.objectStoreNames.contains('settings')) {
+                db.createObjectStore('settings');
+            }
+        };
+    });
+}
+
+async function saveDirectoryHandle(handle) {
+    try {
+        const db = await openDB();
+        const transaction = db.transaction(['settings'], 'readwrite');
+        const store = transaction.objectStore('settings');
+        await store.put(handle, 'lastDirectory');
+        lastDirectoryHandle = handle;
+    } catch (error) {
+        console.warn('Could not save directory handle:', error);
+    }
+}
+
+async function loadDirectoryHandle() {
+    try {
+        const db = await openDB();
+        const transaction = db.transaction(['settings'], 'readonly');
+        const store = transaction.objectStore('settings');
+        const request = store.get('lastDirectory');
+        
+        return new Promise((resolve) => {
+            request.onsuccess = async () => {
+                const handle = request.result;
+                if (handle) {
+                    // Verify permission
+                    try {
+                        const permission = await handle.queryPermission({ mode: 'read' });
+                        if (permission === 'granted') {
+                            lastDirectoryHandle = handle;
+                            resolve(handle);
+                            return;
+                        }
+                    } catch (e) {
+                        // Handle might be stale
+                    }
+                }
+                resolve(null);
+            };
+            request.onerror = () => resolve(null);
+        });
+    } catch (error) {
+        return null;
+    }
+}
+
 // Browse directory handler
 async function browseDirectory() {
     if (!isFileSystemAccessAPISupported) {
@@ -458,7 +521,28 @@ async function browseDirectory() {
     }
     
     try {
-        const directoryHandle = await window.showDirectoryPicker();
+        // Try to use last directory if available
+        let directoryHandle;
+        
+        if (lastDirectoryHandle) {
+            try {
+                const permission = await lastDirectoryHandle.requestPermission({ mode: 'read' });
+                if (permission === 'granted') {
+                    directoryHandle = lastDirectoryHandle;
+                } else {
+                    directoryHandle = await window.showDirectoryPicker();
+                }
+            } catch (e) {
+                // User denied or handle invalid, show picker
+                directoryHandle = await window.showDirectoryPicker();
+            }
+        } else {
+            directoryHandle = await window.showDirectoryPicker();
+        }
+        
+        // Save for next time
+        await saveDirectoryHandle(directoryHandle);
+        
         showStatus('Scanning directory for font files...');
         
         const files = await processDirectoryRecursively(directoryHandle);
@@ -603,7 +687,8 @@ async function handleFiles(fileList) {
                 id: `font_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                 ...metadata,
                 font: font,
-                file: file
+                file: file,
+                assignedFamily: null // User-assigned family override
             });
         } catch (error) {
             console.error(`Error processing ${file.name}:`, error);
@@ -907,6 +992,11 @@ function isVariableFont(font) {
 
 // Helper function to extract and clean family name
 function extractFamilyName(fontData, filename) {
+    // Priority 0: Assigned family (user-moved font to different family)
+    if (fontData && fontData.assignedFamily) {
+        return fontData.assignedFamily;
+    }
+    
     // Priority 1: Name ID 16 (preferred family name) if available
     if (fontData && fontData.nameTableEntries && fontData.nameTableEntries[16] && fontData.nameTableEntries[16] !== 'Unknown') {
         return fontData.nameTableEntries[16];
@@ -1330,7 +1420,29 @@ function renderFontList() {
     // Group fonts by family
     const grouped = groupFontsByFamily(fonts);
     
-    Object.entries(grouped).forEach(([family, familyFonts]) => {
+    // Initialize or update familyOrder
+    const currentFamilies = Object.keys(grouped);
+    if (familyOrder.length === 0 || !currentFamilies.every(f => familyOrder.includes(f))) {
+        // Initialize or add missing families
+        const sortedFamilies = Object.keys(grouped).sort((a, b) => {
+            if (a === 'Ungrouped') return 1;
+            if (b === 'Ungrouped') return -1;
+            return a.localeCompare(b);
+        });
+        
+        // Preserve existing order for families that still exist, add new ones at end
+        const existingOrder = familyOrder.filter(f => currentFamilies.includes(f));
+        const newFamilies = sortedFamilies.filter(f => !familyOrder.includes(f));
+        familyOrder = [...existingOrder, ...newFamilies];
+    }
+    
+    // Remove families that no longer exist
+    familyOrder = familyOrder.filter(f => currentFamilies.includes(f));
+    
+    // Render families in custom order
+    familyOrder.forEach(family => {
+        const familyFonts = grouped[family];
+        if (!familyFonts) return;
         const isExpanded = expandedFamilies.has(family);
         const arrow = isExpanded ? '▼' : '▶';
         const expandedClass = isExpanded ? 'expanded' : 'collapsed';
@@ -1342,9 +1454,15 @@ function renderFontList() {
         const toggleState = allSelected ? 'checked' : (someSelected ? 'indeterminate' : '');
         
         html += `
-            <div class="font-family-group ${expandedClass}">
-                <div class="font-family-header" onclick="toggleFamily('${escapeHtml(family)}')">
-                    <span class="family-arrow">${arrow}</span>
+            <div class="font-family-group ${expandedClass}" data-family-name="${escapeHtml(family)}">
+                <div class="font-family-header" 
+                     draggable="true"
+                     data-family-name="${escapeHtml(family)}"
+                     ondragstart="handleFamilyDragStart(event, '${escapeHtml(family)}')"
+                     ondragend="handleFamilyDragEnd(event)"
+                     onclick="toggleFamily('${escapeHtml(family)}')">
+                    <span class="family-drag-handle" title="Drag to reorder or remove">⋮⋮</span>
+                    <span class="family-arrow" onclick="event.stopPropagation(); toggleFamily('${escapeHtml(family)}')">${arrow}</span>
                     <input type="checkbox" class="family-toggle" ${allSelected ? 'checked' : ''} ${someSelected && !allSelected ? 'indeterminate' : ''} onclick="event.stopPropagation(); toggleFamilySelection('${escapeHtml(family)}', event)" title="Toggle all fonts in family">
                     <span class="family-name">${escapeHtml(family)}</span>
                     <span class="family-count">(${familyFonts.length})</span>
@@ -1376,16 +1494,17 @@ function renderFontItem(fontData, index) {
     }
     
     return `
-        <div class="font-item ${isSelected ? 'selected' : ''}" 
+        <div class="font-item ${isSelected ? 'selected' : ''}"
              data-font-index="${index}" 
              data-drag-type="font"
              onclick="toggleSelection(${index}, event)" 
              draggable="true"
              ondragstart="handleFontDragStart(event, ${index})"
              ondragend="handleFontDragEnd(event)">
+            <span class="font-drag-handle" title="Drag to reorder or remove">⋮⋮</span>
             ${badgesHtml}
             <span class="font-name">${escapeHtml(fontData.filename)}</span>
-            <span class="font-drag-handle" title="Drag to reorder or remove">⋮⋮</span>
+            
         </div>
     `;
 }
@@ -1523,6 +1642,7 @@ if (clearAllBtn) {
 // Drag and drop handlers for font items
 let draggedFontIndex = null;
 let draggedFontElement = null;
+let draggedFamilyName = null;
 
 function handleFontDragStart(event, index) {
     draggedFontIndex = index;
@@ -1532,6 +1652,10 @@ function handleFontDragStart(event, index) {
     
     // Add dragging class for visual feedback
     event.target.classList.add('dragging');
+    
+    // Show trash zone
+    const trash = createTrashZone();
+    trash.classList.add('visible');
     
     // Create ghost image
     const dragImage = event.target.cloneNode(true);
@@ -1549,10 +1673,9 @@ function handleFontDragStart(event, index) {
 }
 
 function handleFontDragEnd(event) {
-    // Cleanup remove indicator
-    if (removeIndicator) {
-        document.body.removeChild(removeIndicator);
-        removeIndicator = null;
+    // Hide trash zone
+    if (trashZone) {
+        trashZone.classList.remove('visible', 'drag-over-trash');
     }
     
     draggedFontIndex = null;
@@ -1565,9 +1688,116 @@ function handleFontDragEnd(event) {
     document.querySelectorAll('.font-family-items.drag-over').forEach(el => el.classList.remove('drag-over'));
 }
 
+// Family drag handlers
+function handleFamilyDragStart(event, familyName) {
+    draggedFamilyName = familyName;
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', familyName);
+    event.currentTarget.classList.add('dragging');
+    
+    // Show trash zone
+    const trash = createTrashZone();
+    trash.classList.add('visible');
+    
+    event.stopPropagation(); // Prevent font-level drag
+}
+
+function handleFamilyDragEnd(event) {
+    draggedFamilyName = null;
+    event.currentTarget.classList.remove('dragging');
+    
+    if (trashZone) {
+        trashZone.classList.remove('visible', 'drag-over-trash');
+    }
+    
+    document.querySelectorAll('.drop-indicator').forEach(el => el.remove());
+    document.querySelectorAll('.font-family-header.drag-over').forEach(el => el.classList.remove('drag-over'));
+}
+
+// Family header drag handlers for reordering
+function handleFamilyHeaderDragOver(event) {
+    if (draggedFamilyName === null) return;
+    
+    const targetFamily = event.currentTarget.getAttribute('data-family-name');
+    if (targetFamily === draggedFamilyName) {
+        event.dataTransfer.dropEffect = 'none';
+        return;
+    }
+    
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'move';
+}
+
+function handleFamilyHeaderDragEnter(event) {
+    if (draggedFamilyName === null) return;
+    
+    const targetFamily = event.currentTarget.getAttribute('data-family-name');
+    if (targetFamily !== draggedFamilyName) {
+        event.currentTarget.classList.add('drag-over');
+        
+        // Show drop indicator
+        document.querySelectorAll('.drop-indicator').forEach(el => el.remove());
+        
+        const rect = event.currentTarget.getBoundingClientRect();
+        const indicator = document.createElement('div');
+        indicator.className = 'drop-indicator';
+        indicator.style.position = 'fixed';
+        indicator.style.left = `${rect.left}px`;
+        indicator.style.width = `${rect.width}px`;
+        indicator.style.height = '2px';
+        indicator.style.backgroundColor = 'var(--color-primary)';
+        indicator.style.zIndex = '1000';
+        indicator.style.pointerEvents = 'none';
+        indicator.style.top = `${rect.top}px`;
+        document.body.appendChild(indicator);
+    }
+}
+
+function handleFamilyHeaderDragLeave(event) {
+    event.currentTarget.classList.remove('drag-over');
+}
+
+function handleFamilyHeaderDrop(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    
+    if (draggedFamilyName === null) return;
+    
+    const targetFamily = event.currentTarget.getAttribute('data-family-name');
+    if (targetFamily === draggedFamilyName) {
+        event.currentTarget.classList.remove('drag-over');
+        document.querySelectorAll('.drop-indicator').forEach(el => el.remove());
+        return;
+    }
+    
+    // Reorder families
+    const draggedIndex = familyOrder.indexOf(draggedFamilyName);
+    const targetIndex = familyOrder.indexOf(targetFamily);
+    
+    if (draggedIndex !== -1 && targetIndex !== -1 && draggedIndex !== targetIndex) {
+        // Remove dragged family from its current position
+        familyOrder.splice(draggedIndex, 1);
+        
+        // Calculate new target index (adjust if dragged was before target)
+        // If we removed an item before the target, target index shifts down by 1
+        const newTargetIndex = draggedIndex < targetIndex ? targetIndex - 1 : targetIndex;
+        familyOrder.splice(newTargetIndex, 0, draggedFamilyName);
+        
+        // Re-render
+        renderFontList();
+    }
+    
+    // Cleanup
+    document.querySelectorAll('.drop-indicator').forEach(el => el.remove());
+    event.currentTarget.classList.remove('drag-over');
+}
+
 // Make drag handlers globally accessible
 window.handleFontDragStart = handleFontDragStart;
 window.handleFontDragEnd = handleFontDragEnd;
+window.handleFamilyDragStart = handleFamilyDragStart;
+window.handleFamilyDragEnd = handleFamilyDragEnd;
 
 // Attach drag handlers to font items and family containers after rendering
 function attachFontDragHandlers() {
@@ -1609,6 +1839,24 @@ function attachFontDragHandlers() {
         container.addEventListener('drop', handleFamilyItemsDrop);
         container.addEventListener('dragenter', handleFamilyItemsDragEnter);
         container.addEventListener('dragleave', handleFamilyItemsDragLeave);
+    });
+    
+    // Attach handlers to family headers for reordering
+    const familyHeaders = document.querySelectorAll('.font-family-header');
+    familyHeaders.forEach(header => {
+        const hasListeners = header.dataset.hasReorderListeners === 'true';
+        if (hasListeners) {
+            const newHeader = header.cloneNode(true);
+            header.parentNode.replaceChild(newHeader, header);
+            header = newHeader;
+        }
+        
+        header.dataset.hasReorderListeners = 'true';
+        
+        header.addEventListener('dragover', handleFamilyHeaderDragOver);
+        header.addEventListener('drop', handleFamilyHeaderDrop);
+        header.addEventListener('dragenter', handleFamilyHeaderDragEnter);
+        header.addEventListener('dragleave', handleFamilyHeaderDragLeave);
     });
 }
 
@@ -1672,6 +1920,18 @@ function handleFontDrop(event) {
     if (targetIndex === draggedFontIndex || isNaN(targetIndex)) {
         event.currentTarget.classList.remove('drag-over');
         return;
+    }
+    
+    // Get the target font's family to check if we're moving across families
+    const targetFont = fonts[targetIndex];
+    const draggedFont = fonts[draggedFontIndex];
+    const targetFamily = extractFamilyName(targetFont, targetFont.filename);
+    const draggedFamily = extractFamilyName(draggedFont, draggedFont.filename);
+    
+    // If moving to different family, update the font's family metadata
+    if (targetFamily !== draggedFamily) {
+        // Update the font's assigned family to match target family
+        fonts[draggedFontIndex].assignedFamily = targetFamily;
     }
     
     // Reorder fonts
@@ -1803,6 +2063,16 @@ function handleFamilyItemsDrop(event) {
         return;
     }
     
+    // Extract family name from the container's parent .font-family-group element
+    const familyGroup = container.closest('.font-family-group');
+    const familyHeader = familyGroup?.querySelector('.font-family-header');
+    const familyName = familyHeader?.querySelector('.family-name')?.textContent;
+    
+    // If dropping into a family container, set assignedFamily to that family
+    if (familyName) {
+        fonts[draggedFontIndex].assignedFamily = familyName;
+    }
+    
     // Reorder fonts
     const fontToMove = fonts[draggedFontIndex];
     if (!fontToMove) {
@@ -1841,78 +2111,71 @@ function handleFamilyItemsDrop(event) {
     updateComparison();
 }
 
-// Handle drag outside sidebar for removal
-let removeIndicator = null;
+// Handle drag outside sidebar for removal - trash zone
+let trashZone = null;
 
-document.addEventListener('dragover', (e) => {
-    if (draggedFontIndex === null) return;
+function createTrashZone() {
+    if (trashZone) return trashZone;
     
-    // Check if dragging outside sidebar (and not over a font item or family container)
-    const isOverSidebar = sidebar.contains(e.target);
-    const isOverFontItem = e.target.closest('.font-item') !== null;
-    const isOverFamilyContainer = e.target.closest('.font-family-items') !== null;
+    trashZone = document.createElement('div');
+    trashZone.id = 'trashZone';
+    trashZone.className = 'trash-zone';
+    trashZone.innerHTML = `
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            <line x1="10" y1="11" x2="10" y2="17"></line>
+            <line x1="14" y1="11" x2="14" y2="17"></line>
+        </svg>
+        <span>Drop to Remove</span>
+    `;
+    document.body.appendChild(trashZone);
     
-    if (!isOverSidebar || (!isOverFontItem && !isOverFamilyContainer)) {
-        e.dataTransfer.dropEffect = 'none';
-        // Show remove indicator
-        if (!removeIndicator) {
-            removeIndicator = document.createElement('div');
-            removeIndicator.className = 'remove-indicator';
-            removeIndicator.textContent = 'Drop to remove';
-            document.body.appendChild(removeIndicator);
+    // Add drag handlers to trash zone
+    trashZone.addEventListener('dragover', (e) => {
+        if (draggedFontIndex !== null || draggedFamilyName !== null) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            trashZone.classList.add('drag-over-trash');
         }
-    } else {
-        // Remove indicator when back in sidebar over valid drop target
-        if (removeIndicator && (isOverFontItem || isOverFamilyContainer)) {
-            document.body.removeChild(removeIndicator);
-            removeIndicator = null;
-        }
-    }
-});
-
-document.addEventListener('drop', (e) => {
-    if (draggedFontIndex === null) return;
+    });
     
-    // Check if dropped outside sidebar or on a non-drop target
-    const isOverSidebar = sidebar.contains(e.target);
-    const isOverFontItem = e.target.closest('.font-item') !== null;
-    const isOverFamilyContainer = e.target.closest('.font-family-items') !== null;
+    trashZone.addEventListener('dragleave', () => {
+        trashZone.classList.remove('drag-over-trash');
+    });
     
-    // Only handle removal if dropped outside sidebar or on invalid target
-    if (!isOverSidebar || (!isOverFontItem && !isOverFamilyContainer)) {
+    trashZone.addEventListener('drop', (e) => {
         e.preventDefault();
         e.stopPropagation();
         
-        // Remove font
-        const index = draggedFontIndex;
-        if (index >= 0 && index < fonts.length) {
-            fonts.splice(index, 1);
-            selectedIndices.delete(index);
+        if (draggedFontIndex !== null) {
+            removeFont(draggedFontIndex);
+            trashZone.classList.remove('drag-over-trash', 'visible');
+        } else if (draggedFamilyName !== null) {
+            // Remove all fonts in family
+            const grouped = groupFontsByFamily(fonts);
+            const familyFonts = grouped[draggedFamilyName] || [];
+            const indicesToRemove = familyFonts.map(f => f.index).sort((a, b) => b - a);
             
-            // Update selected indices
-            const oldSelected = Array.from(selectedIndices);
-            selectedIndices.clear();
-            oldSelected.forEach(oldIdx => {
-                if (oldIdx > index) {
-                    selectedIndices.add(oldIdx - 1);
-                } else if (oldIdx < index) {
-                    selectedIndices.add(oldIdx);
-                }
+            // Remove in reverse order to maintain indices
+            indicesToRemove.forEach(idx => {
+                fonts.splice(idx, 1);
             });
             
-            // Cleanup
-            if (removeIndicator) {
-                document.body.removeChild(removeIndicator);
-                removeIndicator = null;
-            }
-            draggedFontIndex = null;
+            // Update selectedIndices
+            selectedIndices.clear();
             
-            // Re-render
             renderFontList();
             updateComparison();
+            trashZone.classList.remove('drag-over-trash', 'visible');
         }
-    }
-});
+    });
+    
+    return trashZone;
+}
+
+// Trash zone handles removal via its own drop handler
+// No need for document-level drag handlers anymore
 
 function toggleSelection(index, event) {
     // Prevent event from bubbling if needed
@@ -3289,10 +3552,15 @@ function initializeApp() {
     }
 }
 
+// Load directory handle on startup
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initializeApp);
+    document.addEventListener('DOMContentLoaded', async () => {
+        initializeApp();
+        await loadDirectoryHandle();
+    });
 } else {
     // DOM already loaded
     initializeApp();
+    loadDirectoryHandle();
 }
 
