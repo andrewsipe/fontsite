@@ -183,6 +183,12 @@ body {
     flex-direction: column;
     overflow: hidden;
     flex-shrink: 0;
+    position: relative;
+}
+
+.sidebar.drag-over {
+    background: var(--color-primary-light);
+    border: 2px dashed var(--color-primary);
 }
 
 .resize-handle {
@@ -201,6 +207,12 @@ body {
 
 .resize-handle:active {
     background: var(--color-primary-hover);
+}
+
+.logo-header {
+    margin-top: 8px;
+    padding: var(--space-xl);
+    border-bottom: var(--border-width) solid var(--color-border);
 }
 
 .sidebar-header {
@@ -252,7 +264,6 @@ body {
     border-radius: var(--radius-base);
     cursor: pointer;
     font-size: var(--font-size-base);
-    margin-top: var(--space-md);
     font-weight: var(--font-weight-medium);
     transition: background var(--transition-fast);
 }
@@ -264,7 +275,23 @@ body {
 .font-list {
     flex: 1;
     overflow-y: auto;
-    border-top: var(--border-width) solid var(--color-border);
+    display: flex;
+    flex-direction: column;
+}
+.font-list-browse .btn {
+    width: 100%;
+}
+/* Browse button in font list */
+.font-list-browse {
+    padding: var(--space-base) var(--space-xl);
+    border-bottom: var(--border-width) solid var(--color-border);
+    background: var(--color-bg-surface);
+    width: 100%;
+}
+
+.font-list-browse small {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
 }
 
 /* Font Family Group */
@@ -289,6 +316,20 @@ body {
 
 .font-family-header:hover {
     background: var(--color-border-light);
+}
+
+/* Family Toggle Checkbox */
+.family-toggle {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    flex-shrink: 0;
+    accent-color: var(--color-secondary-active);
+}
+
+.family-toggle:indeterminate {
+    background: var(--color-secondary-active);
+    border-color: var(--color-secondary-active);
 }
 
 .family-arrow {
@@ -331,10 +372,13 @@ body {
     padding-left: calc(var(--space-xl) + var(--space-lg)); /* Indent from family header */
     display: flex;
     align-items: center;
-    gap: var(--space-base);
+    gap: var(--space-sm);
     border-bottom: var(--border-width) solid var(--color-border-lightest);
     transition: background var(--transition-fast);
     min-height: 32px;
+    cursor: pointer;
+    user-select: none;
+    position: relative;
 }
 
 .font-item:hover {
@@ -346,28 +390,59 @@ body {
 }
 
 .font-item.selected {
-    background: var(--color-bg-selected);
+    background: var(--color-secondary-focus);
+    border-left: 3px solid var(--color-secondary-active);
 }
 
-/* Star Button */
-.font-star-btn {
-    background: none;
-    border: none;
-    font-size: var(--font-size-lg);
-    cursor: pointer;
-    padding: 0;
-    width: 20px;
-    height: 20px;
+.font-item.dragging {
+    opacity: 0.5;
+}
+
+.font-item.drag-over {
+    background: var(--color-primary-light);
+}
+
+/* Drag Handle */
+.font-drag-handle {
+    font-size: var(--font-size-md);
+    color: var(--color-text-secondary);
+    cursor: grab;
+    user-select: none;
+    flex-shrink: 0;
+    width: 16px;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: transform var(--transition-fast);
-    flex-shrink: 0;
     line-height: 1;
+    letter-spacing: -2px;
 }
 
-.font-star-btn:hover {
-    transform: scale(1.2);
+.font-drag-handle:active {
+    cursor: grabbing;
+}
+
+/* Font List Badges (16px) */
+.font-list-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    border-radius: var(--radius-base);
+    font-size: 16px;
+    font-weight: var(--font-weight-bold);
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.font-list-badge.vf-badge {
+    background: var(--color-vf-primary);
+    color: white;
+}
+
+.font-list-badge.ot-badge {
+    background: var(--color-ot-primary);
+    color: white;
 }
 
 /* Font Name */
@@ -378,41 +453,6 @@ body {
     word-break: break-word;
     overflow-wrap: break-word;
     min-width: 0;
-    cursor: pointer;
-}
-
-/* Remove Button */
-.font-remove-btn {
-    background: var(--color-danger);
-    border: none;
-    color: white;
-    width: 20px;
-    height: 20px;
-    border-radius: var(--radius-circle);
-    cursor: pointer;
-    font-size: var(--font-size-lg);
-    font-weight: var(--font-weight-bold);
-    line-height: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: background var(--transition-fast), transform var(--transition-fast);
-    flex-shrink: 0;
-    opacity: 0.8;
-}
-
-.font-item:hover .font-remove-btn {
-    opacity: 1;
-}
-
-.font-remove-btn:hover {
-    background: var(--color-danger-hover);
-    transform: scale(1.1);
-}
-
-.font-remove-btn:active {
-    background: var(--color-danger-active);
-    transform: scale(0.95);
 }
 
 .sidebar-footer {
@@ -561,6 +601,17 @@ body {
     height: 32px;
 }
 
+/* Ensure the paths inherit color and the SVG fits its container */
+.view-mode-btn svg {
+    width: 100%;
+    height: 100%;
+}
+
+.view-mode-btn svg path {
+    stroke: currentColor;
+    transition: stroke var(--transition-fast);
+}
+
 .view-icon {
     width: 16px;
     height: 16px;
@@ -573,15 +624,19 @@ body {
     transform: rotate(90deg);
 }
 
-.view-mode-btn:hover {
+/* Hover & Focus States */
+.view-mode-btn:hover,
+.view-mode-btn:focus-visible {
     background: var(--color-bg-surface);
     color: var(--color-text-primary);
 }
 
+/* Active State */
 .view-mode-btn.active {
     background: var(--color-primary);
     color: var(--color-bg-surface);
 }
+
 
 .preview-controls {
     display: flex;
@@ -744,7 +799,7 @@ body {
 
 .font-column-header-badges {
     display: flex;
-    gap: var(--space-xs);
+    gap: var(--space-base);
     align-items: center;
 }
 
@@ -943,7 +998,8 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    height: 100%;
+    flex: 1;
+    min-height: 200px;
     color: var(--color-text-tertiary);
     font-size: var(--font-size-md);
     flex-direction: column;
@@ -1193,7 +1249,6 @@ body {
     font-size: var(--vf-font-size);
     font-weight: var(--font-weight-bold);
     font-family: var(--font-family-base);
-    margin-right: var(--space-sm);
     vertical-align: middle;
     flex-shrink: 0;
     cursor: pointer;
@@ -1226,7 +1281,6 @@ body {
     font-weight: var(--font-weight-bold);
     font-family: var(--font-family-base);
     font-style: italic;
-    margin-right: var(--space-sm);
     vertical-align: middle;
     flex-shrink: 0;
     cursor: pointer;
@@ -1242,7 +1296,6 @@ body {
     background: var(--color-ot-primary-active);
     box-shadow: 0 0 0 2px var(--color-ot-shadow);
 }
-
 
 .file-size {
     font-size: var(--font-size-sm);
@@ -1563,6 +1616,29 @@ body {
 .horizontal-metadata-row:last-child {
     border-bottom: none;
     padding-bottom: 0;
+}
+
+/* Drag and drop indicators */
+.drop-indicator {
+    position: absolute;
+    height: 2px;
+    background: var(--color-primary);
+    z-index: 1000;
+    pointer-events: none;
+}
+
+.remove-indicator {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    padding: 20px 40px;
+    background: var(--color-danger);
+    color: white;
+    border-radius: var(--radius-base);
+    z-index: 10000;
+    pointer-events: none;
+    font-weight: var(--font-weight-semibold);
 }
 
 .horizontal-metadata-label {
