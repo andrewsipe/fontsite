@@ -1,6 +1,9 @@
+// Debug flag - set to true to enable verbose console logging
+const DEBUG = false;
+
+// Application state - using global variables for simplicity
 let fonts = [];
 let selectedIndices = new Set();
-let fontFaceStyleElements = [];
 let collapsedSections = new Set();
 let variableMode = new Set(); // Column indices in variable mode
 let otMode = new Set(); // Column indices in OpenType features mode
@@ -9,240 +12,181 @@ let currentVariations = {}; // Track axis values per column: { columnIndex: { "w
 let activeFeatures = {}; // Track active features per column: { columnIndex: Set(['liga', 'kern']) }
 let viewMode = localStorage.getItem('fontAnalyzer_viewMode') || 'column'; // 'column', 'gallery', or 'horizontal'
 let horizontalMetadataFields = JSON.parse(localStorage.getItem('fontAnalyzer_horizontalFields') || '["family", "subfamily", "glyphs", "weightClass", "format", "size"]');
-let lastDirectoryHandle = null;
+let snapToTicks = localStorage.getItem('fontAnalyzer_snapToTicks') !== 'false'; // Default to true
 let familyOrder = []; // Custom order for family groups
 
-// OpenType feature descriptions
-const FEATURE_DESCRIPTIONS = {
-    'liga': {
-        name: 'Standard Ligatures',
-        description: 'Replaces character pairs with ligatures (e.g., fi, fl)'
-    },
-    'dlig': {
-        name: 'Discretionary Ligatures',
-        description: 'Optional stylistic ligatures'
-    },
-    'hlig': {
-        name: 'Historical Ligatures',
-        description: 'Ligatures used historically'
-    },
-    'clig': {
-        name: 'Contextual Ligatures',
-        description: 'Context-dependent ligatures'
-    },
-    'kern': {
-        name: 'Kerning',
-        description: 'Adjusts spacing between character pairs'
-    },
-    'calt': {
-        name: 'Contextual Alternates',
-        description: 'Context-dependent character substitutions'
-    },
-    'swsh': {
-        name: 'Swash',
-        description: 'Decorative character variants'
-    },
-    'cswh': {
-        name: 'Contextual Swash',
-        description: 'Context-dependent swash variants'
-    },
-    'salt': {
-        name: 'Stylistic Alternates',
-        description: 'Alternative character forms'
-    },
-    'nalt': {
-        name: 'Alternate Annotation Forms',
-        description: 'Alternative number forms'
-    },
-    'frac': {
-        name: 'Fractions',
-        description: 'Converts numbers to fraction glyphs'
-    },
-    'afrc': {
-        name: 'Alternative Fractions',
-        description: 'Alternative fraction forms'
-    },
-    'ordn': {
-        name: 'Ordinals',
-        description: 'Converts numbers to ordinal forms'
-    },
-    'sups': {
-        name: 'Superscript',
-        description: 'Raises characters above baseline'
-    },
-    'subs': {
-        name: 'Subscript',
-        description: 'Lowers characters below baseline'
-    },
-    'sinf': {
-        name: 'Scientific Inferiors',
-        description: 'Scientific notation subscripts'
-    },
-    'numr': {
-        name: 'Numerators',
-        description: 'Numerator forms in fractions'
-    },
-    'dnom': {
-        name: 'Denominators',
-        description: 'Denominator forms in fractions'
-    },
-    'onum': {
-        name: 'Oldstyle Figures',
-        description: 'Numerals with varying heights'
-    },
-    'lnum': {
-        name: 'Lining Figures',
-        description: 'Numerals uniform in height'
-    },
-    'pnum': {
-        name: 'Proportional Figures',
-        description: 'Numerals with variable widths'
-    },
-    'tnum': {
-        name: 'Tabular Figures',
-        description: 'Numerals with equal widths'
-    },
-    'smcp': {
-        name: 'Small Capitals',
-        description: 'Lowercase letters as small caps'
-    },
-    'c2sc': {
-        name: 'Small Capitals From Capitals',
-        description: 'Converts capitals to small caps'
-    },
-    'pcap': {
-        name: 'Petite Capitals',
-        description: 'Smaller variant of small caps'
-    },
-    'c2pc': {
-        name: 'Petite Capitals From Capitals',
-        description: 'Converts capitals to petite caps'
-    },
-    'unic': {
-        name: 'Unicase',
-        description: 'Single case form combining upper and lower'
-    },
-    'titl': {
-        name: 'Titling',
-        description: 'Uppercase forms designed for all-caps'
-    },
-    'zero': {
-        name: 'Slashed Zero',
-        description: 'Zero with diagonal slash'
-    },
-    'aalt': {
-        name: 'Access All Alternates',
-        description: 'Access to all alternates'
-    },
-    'ccmp': {
-        name: 'Glyph Composition/Decomposition',
-        description: 'Character composition'
-    },
-    'locl': {
-        name: 'Localized Forms',
-        description: 'Localized character variants'
-    },
-    'mark': {
-        name: 'Mark Positioning',
-        description: 'Positioning for combining marks'
-    },
-    'mkmk': {
-        name: 'Mark to Mark Positioning',
-        description: 'Positioning between marks'
-    },
-    'rtlm': {
-        name: 'Right-to-Left',
-        description: 'Right-to-left text direction'
-    },
-    'vert': {
-        name: 'Vertical Writing',
-        description: 'Vertical text orientation'
-    },
-    'vrt2': {
-        name: 'Vertical Alternates and Rotation',
-        description: 'Vertical character variants'
-    },
-    'ss01': {
-        name: 'Stylistic Set 1',
-        description: 'First set of stylistic alternates'
-    },
-    'ss02': {
-        name: 'Stylistic Set 2',
-        description: 'Second set of stylistic alternates'
-    },
-    'ss03': {
-        name: 'Stylistic Set 3',
-        description: 'Third set of stylistic alternates'
-    },
-    'ss04': {
-        name: 'Stylistic Set 4',
-        description: 'Fourth set of stylistic alternates'
-    },
-    'ss05': {
-        name: 'Stylistic Set 5',
-        description: 'Fifth set of stylistic alternates'
-    },
-    'ss06': {
-        name: 'Stylistic Set 6',
-        description: 'Sixth set of stylistic alternates'
-    },
-    'ss07': {
-        name: 'Stylistic Set 7',
-        description: 'Seventh set of stylistic alternates'
-    },
-    'ss08': {
-        name: 'Stylistic Set 8',
-        description: 'Eighth set of stylistic alternates'
-    },
-    'ss09': {
-        name: 'Stylistic Set 9',
-        description: 'Ninth set of stylistic alternates'
-    },
-    'ss10': {
-        name: 'Stylistic Set 10',
-        description: 'Tenth set of stylistic alternates'
-    },
-    'ss11': {
-        name: 'Stylistic Set 11',
-        description: 'Eleventh set of stylistic alternates'
-    },
-    'ss12': {
-        name: 'Stylistic Set 12',
-        description: 'Twelfth set of stylistic alternates'
-    },
-    'ss13': {
-        name: 'Stylistic Set 13',
-        description: 'Thirteenth set of stylistic alternates'
-    },
-    'ss14': {
-        name: 'Stylistic Set 14',
-        description: 'Fourteenth set of stylistic alternates'
-    },
-    'ss15': {
-        name: 'Stylistic Set 15',
-        description: 'Fifteenth set of stylistic alternates'
-    },
-    'ss16': {
-        name: 'Stylistic Set 16',
-        description: 'Sixteenth set of stylistic alternates'
-    },
-    'ss17': {
-        name: 'Stylistic Set 17',
-        description: 'Seventeenth set of stylistic alternates'
-    },
-    'ss18': {
-        name: 'Stylistic Set 18',
-        description: 'Eighteenth set of stylistic alternates'
-    },
-    'ss19': {
-        name: 'Stylistic Set 19',
-        description: 'Nineteenth set of stylistic alternates'
-    },
-    'ss20': {
-        name: 'Stylistic Set 20',
-        description: 'Twentieth set of stylistic alternates'
-    }
+// UI state
+let fontFaceStyleElements = [];
+// Map to track font-face styles by dataUrl for reuse
+const fontFaceStyleMap = new Map(); // dataUrl -> { styleElement, fontFaceName }
+let lastDirectoryHandle = null;
+
+// OpenType feature friendly names from Microsoft OpenType spec
+// Source: https://learn.microsoft.com/en-us/typography/opentype/spec/featurelist
+const FEATURE_NAMES = {
+    'aalt': 'Access All Alternates',
+    'abvf': 'Above-base Forms',
+    'abvm': 'Above-base Mark Positioning',
+    'abvs': 'Above-base Substitutions',
+    'afrc': 'Alternative Fractions',
+    'akhn': 'Akhand',
+    'apkn': 'Kerning for Alternate Proportional Widths',
+    'blwf': 'Below-base Forms',
+    'blwm': 'Below-base Mark Positioning',
+    'blws': 'Below-base Substitutions',
+    'calt': 'Contextual Alternates',
+    'case': 'Case-sensitive Forms',
+    'ccmp': 'Glyph Composition / Decomposition',
+    'cfar': 'Conjunct Form After Ro',
+    'chws': 'Contextual Half-width Spacing',
+    'cjct': 'Conjunct Forms',
+    'clig': 'Contextual Ligatures',
+    'cpct': 'Centered CJK Punctuation',
+    'cpsp': 'Capital Spacing',
+    'cswh': 'Contextual Swash',
+    'curs': 'Cursive Positioning',
+    'c2pc': 'Petite Capitals From Capitals',
+    'c2sc': 'Small Capitals From Capitals',
+    'dist': 'Distances',
+    'dlig': 'Discretionary Ligatures',
+    'dnom': 'Denominators',
+    'dtls': 'Dotless Forms',
+    'expt': 'Expert Forms',
+    'falt': 'Final Glyph on Line Alternates',
+    'fin2': 'Terminal Forms #2',
+    'fin3': 'Terminal Forms #3',
+    'fina': 'Terminal Forms',
+    'flac': 'Flattened Accent Forms',
+    'frac': 'Fractions',
+    'fwid': 'Full Widths',
+    'half': 'Half Forms',
+    'haln': 'Halant Forms',
+    'halt': 'Alternate Half Widths',
+    'hist': 'Historical Forms',
+    'hkna': 'Horizontal Kana Alternates',
+    'hlig': 'Historical Ligatures',
+    'hngl': 'Hangul',
+    'hojo': 'Hojo Kanji Forms (JIS X 0212-1990 Kanji Forms)',
+    'hwid': 'Half Widths',
+    'init': 'Initial Forms',
+    'isol': 'Isolated Forms',
+    'ital': 'Italics',
+    'jalt': 'Justification Alternates',
+    'jp78': 'JIS78 Forms',
+    'jp83': 'JIS83 Forms',
+    'jp90': 'JIS90 Forms',
+    'jp04': 'JIS2004 Forms',
+    'kern': 'Kerning',
+    'lfbd': 'Left Bounds',
+    'liga': 'Standard Ligatures',
+    'ljmo': 'Leading Jamo Forms',
+    'lnum': 'Lining Figures',
+    'locl': 'Localized Forms',
+    'ltra': 'Left-to-right Alternates',
+    'ltrm': 'Left-to-right Mirrored Forms',
+    'mark': 'Mark Positioning',
+    'med2': 'Medial Forms #2',
+    'medi': 'Medial Forms',
+    'mgrk': 'Mathematical Greek',
+    'mkmk': 'Mark to Mark Positioning',
+    'mset': 'Mark Positioning via Substitution',
+    'nalt': 'Alternate Annotation Forms',
+    'nlck': 'NLC Kanji Forms',
+    'nukt': 'Nukta Forms',
+    'numr': 'Numerators',
+    'onum': 'Oldstyle Figures',
+    'opbd': 'Optical Bounds',
+    'ordn': 'Ordinals',
+    'ornm': 'Ornaments',
+    'palt': 'Proportional Alternate Widths',
+    'pcap': 'Petite Capitals',
+    'pkna': 'Proportional Kana',
+    'pnum': 'Proportional Figures',
+    'pref': 'Pre-base Forms',
+    'pres': 'Pre-base Substitutions',
+    'pstf': 'Post-base Forms',
+    'psts': 'Post-base Substitutions',
+    'pwid': 'Proportional Widths',
+    'qwid': 'Quarter Widths',
+    'rand': 'Randomize',
+    'rclt': 'Required Contextual Alternates',
+    'rkrf': 'Rakar Forms',
+    'rlig': 'Required Ligatures',
+    'rphf': 'Reph Form',
+    'rtbd': 'Right Bounds',
+    'rtla': 'Right-to-left Alternates',
+    'rtlm': 'Right-to-left Mirrored Forms',
+    'ruby': 'Ruby Notation Forms',
+    'rvrn': 'Required Variation Alternates',
+    'salt': 'Stylistic Alternates',
+    'sinf': 'Scientific Inferiors',
+    'size': 'Optical size',
+    'smcp': 'Small Capitals',
+    'smpl': 'Simplified Forms',
+    // Stylistic Sets (ss01-ss20) are generated dynamically - see getFeatureName()
+    'ssty': 'Math Script-style Alternates',
+    'stch': 'Stretching Glyph Decomposition',
+    'subs': 'Subscript',
+    'sups': 'Superscript',
+    'swsh': 'Swash',
+    'titl': 'Titling',
+    'tjmo': 'Trailing Jamo Forms',
+    'tnam': 'Traditional Name Forms',
+    'tnum': 'Tabular Figures',
+    'trad': 'Traditional Forms',
+    'twid': 'Third Widths',
+    'unic': 'Unicase',
+    'valt': 'Alternate Vertical Metrics',
+    'vapk': 'Kerning for Alternate Proportional Vertical Metrics',
+    'vatu': 'Vattu Variants',
+    'vchw': 'Vertical Contextual Half-width Spacing',
+    'vert': 'Vertical Alternates',
+    'vhal': 'Alternate Vertical Half Metrics',
+    'vjmo': 'Vowel Jamo Forms',
+    'vkna': 'Vertical Kana Alternates',
+    'vkrn': 'Vertical Kerning',
+    'vpal': 'Proportional Alternate Vertical Metrics',
+    'vrt2': 'Vertical Alternates and Rotation',
+    'vrtr': 'Vertical Alternates for Rotation',
+    'zero': 'Slashed Zero',
+    // Character Variants (cv01-cv99) are generated dynamically - see getFeatureName()
 };
+
+/**
+ * Get friendly name for an OpenType feature tag
+ * Handles stylistic sets (ss01-ss20) and character variants (cv01-cv99) dynamically
+ * @param {string} tag - The feature tag (e.g., 'liga', 'ss01', 'cv05')
+ * @returns {string} - The friendly name for the feature
+ */
+function getFeatureName(tag) {
+    if (!tag) return `OpenType feature: ${tag}`;
+    
+    // Check static FEATURE_NAMES first
+    if (FEATURE_NAMES[tag]) {
+        return FEATURE_NAMES[tag];
+    }
+    
+    // Generate stylistic set names (ss01-ss20)
+    const ssMatch = tag.match(/^ss(\d{2})$/);
+    if (ssMatch) {
+        const ssNum = parseInt(ssMatch[1], 10);
+        if (ssNum >= 1 && ssNum <= 20) {
+            return `Stylistic Set ${ssNum}`;
+        }
+    }
+    
+    // Generate character variant names (cv01-cv99)
+    const cvMatch = tag.match(/^cv(\d{2})$/);
+    if (cvMatch) {
+        const cvNum = parseInt(cvMatch[1], 10);
+        if (cvNum >= 1 && cvNum <= 99) {
+            return `Character Variant ${cvNum}`;
+        }
+    }
+    
+    // Fallback
+    return `OpenType feature: ${tag}`;
+}
 
 const fileInput = document.createElement('input');
 fileInput.type = 'file';
@@ -268,47 +212,76 @@ ABCDEFGHIJKLM
 abcdefghijklm
 0123456789`;
 let previewText = defaultPreviewText;
+let previewTextSyncTimeout = null; // For debouncing sync operations
 
 // Check if File System Access API is supported
 const isFileSystemAccessAPISupported = 'showDirectoryPicker' in window;
 
+// Show browser compatibility message if File System Access API is not available
+if (!isFileSystemAccessAPISupported) {
+    // Note: This is informational only - the app still works with file selection
+    // Directory selection requires Chrome/Edge 86+ or Safari 15.2+
+    console.info('File System Access API not available. Directory selection will use traditional file picker.');
+}
+
 // Drag and drop handlers - make entire sidebar a drop zone
 sidebar.addEventListener('dragover', (e) => {
-    // Only handle file drops, not font item drags
-    if (e.dataTransfer.types.includes('Files') || e.dataTransfer.types.includes('application/x-moz-file')) {
+    // Only handle file drops, not SortableJS drags
+    // Check if this is a file drag (not a sortable drag)
+    const isFileDrag = e.dataTransfer.types.includes('Files') || 
+                       e.dataTransfer.types.includes('application/x-moz-file') ||
+                       Array.from(e.dataTransfer.types).some(type => type === 'Files' || type.startsWith('application/'));
+    
+    // Skip if this is a SortableJS drag (sortable drags have different types)
+    const isSortableDrag = e.dataTransfer.types.includes('text/plain') && 
+                          (e.target.closest('.font-item') || e.target.closest('.font-family-header'));
+    
+    if (isFileDrag && !isSortableDrag) {
         e.preventDefault();
+        e.stopPropagation();
         sidebar.classList.add('drag-over');
     }
 });
 
 sidebar.addEventListener('dragleave', (e) => {
-    // Only remove drag-over if we're leaving the sidebar
+    // Only remove drag-over if we're actually leaving the sidebar
+    // relatedTarget might be null or point to a child element
     if (!sidebar.contains(e.relatedTarget)) {
         sidebar.classList.remove('drag-over');
     }
 });
 
+// Also clear drag-over when drag ends (safety net)
+document.addEventListener('dragend', () => {
+    sidebar.classList.remove('drag-over');
+});
+
 sidebar.addEventListener('drop', async (e) => {
-    // Skip if this is a font item drag - let document handler deal with it
-    if (draggedFontIndex !== null) {
+    // Only handle file drops, not SortableJS drags
+    const isFileDrag = e.dataTransfer.types.includes('Files') || 
+                       e.dataTransfer.types.includes('application/x-moz-file') ||
+                       Array.from(e.dataTransfer.types).some(type => type === 'Files' || type.startsWith('application/'));
+    
+    // Skip if this is a SortableJS drag
+    const isSortableDrag = e.target.closest('.font-item') || e.target.closest('.font-family-header');
+    
+    if (!isFileDrag || isSortableDrag) {
         return;
     }
     
-    // Only handle file drops, not font item drags
-    if (!e.dataTransfer.types.includes('Files') && !e.dataTransfer.types.includes('application/x-moz-file')) {
-        return;
-    }
-    
+    // Prevent browser default action (opening/downloading files)
     e.preventDefault();
     e.stopPropagation();
     sidebar.classList.remove('drag-over');
     
     // Try to use File System Access API if available (for directory support)
-    if (isFileSystemAccessAPISupported && e.dataTransfer.items) {
+    if (isFileSystemAccessAPISupported && e.dataTransfer.items && e.dataTransfer.items.length > 0) {
         const files = [];
         
         for (const item of e.dataTransfer.items) {
             try {
+                // Check if item supports getAsFileSystemHandle (directory support)
+                if (item.getAsFileSystemHandle) {
                 const handle = await item.getAsFileSystemHandle();
                 
                 if (handle) {
@@ -319,12 +292,26 @@ sidebar.addEventListener('drop', async (e) => {
                     } else if (handle.kind === 'file') {
                         // Get the file
                         const file = await handle.getFile();
+                            files.push(file);
+                        }
+                    }
+                } else {
+                    // Fallback: get as regular file
+                    const file = item.getAsFile();
+                    if (file) {
                         files.push(file);
                     }
                 }
             } catch (error) {
-                // If getAsFileSystemHandle fails, fall back to regular file handling
-                console.warn('Error getting file system handle:', error);
+                // If getAsFileSystemHandle fails, try regular file handling
+                try {
+                    const file = item.getAsFile();
+                    if (file) {
+                        files.push(file);
+                    }
+                } catch (fileError) {
+                    console.warn('Error getting file from drag item:', fileError);
+                }
             }
         }
         
@@ -335,7 +322,9 @@ sidebar.addEventListener('drop', async (e) => {
     }
     
     // Fallback to traditional file list (for files or browsers without API support)
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
     handleFiles(e.dataTransfer.files);
+    }
 });
 
 fileInput.addEventListener('change', (e) => {
@@ -377,7 +366,7 @@ async function browseFonts(event) {
                 handleFiles(files);
             } catch (error) {
                 if (error.name !== 'AbortError') {
-                    console.error('Error selecting files:', error);
+                    showStatus(`Error selecting files: ${error.message}`, 'error');
                     // Fallback to traditional file input
                     fileInput.click();
                 }
@@ -521,26 +510,11 @@ async function browseDirectory() {
     }
     
     try {
-        // Try to use last directory if available
-        let directoryHandle;
+        // Always show directory picker when user explicitly selects directory
+        // This allows them to choose a different directory each time
+        const directoryHandle = await window.showDirectoryPicker();
         
-        if (lastDirectoryHandle) {
-            try {
-                const permission = await lastDirectoryHandle.requestPermission({ mode: 'read' });
-                if (permission === 'granted') {
-                    directoryHandle = lastDirectoryHandle;
-                } else {
-                    directoryHandle = await window.showDirectoryPicker();
-                }
-            } catch (e) {
-                // User denied or handle invalid, show picker
-                directoryHandle = await window.showDirectoryPicker();
-            }
-        } else {
-            directoryHandle = await window.showDirectoryPicker();
-        }
-        
-        // Save for next time
+        // Save for potential future use (but don't auto-use it on next selection)
         await saveDirectoryHandle(directoryHandle);
         
         showStatus('Scanning directory for font files...');
@@ -556,8 +530,7 @@ async function browseDirectory() {
     } catch (error) {
         // User cancelled or error occurred
         if (error.name !== 'AbortError') {
-            console.error('Error browsing directory:', error);
-            showStatus('Error accessing directory', 'error');
+            showStatus(`Error accessing directory: ${error.message}`, 'error');
         }
     }
 }
@@ -566,16 +539,155 @@ async function browseDirectory() {
 window.browseFonts = browseFonts;
 
 // Reset preview text function
-function resetPreviewText() {
+function resetPreviewText(columnIndex = null) {
     previewText = defaultPreviewText;
-    // Update all preview panes
-    document.querySelectorAll('.preview-text[contenteditable="true"]').forEach(preview => {
-        preview.textContent = previewText;
+    // Update all preview panes from single source of truth
+    syncPreviewTextToAllPanes();
+    
+    // Update all character counters
+    document.querySelectorAll('.preview-text-counter').forEach(counter => {
+        const colIdx = parseInt(counter.dataset.columnIndex);
+        const charCount = counter.querySelector('.char-count');
+        if (charCount) {
+            charCount.textContent = previewText.length;
+            counter.classList.remove('at-limit');
+        }
     });
 }
 
 // Make resetPreviewText globally accessible
 window.resetPreviewText = resetPreviewText;
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+    // Cmd/Ctrl + R: Reset preview text
+    if ((e.metaKey || e.ctrlKey) && e.key === 'r') {
+        e.preventDefault();
+        resetPreviewText();
+        showStatus('Preview text reset', 'success');
+    }
+    
+    // Esc: Close any open modals/panels (if we add them in the future)
+    if (e.key === 'Escape') {
+        // Future: close modals, clear selections, etc.
+    }
+    
+    // Tab navigation between font columns (when in comparison view)
+    if (e.key === 'Tab' && !e.shiftKey && selectedIndices.size > 0) {
+        // Allow default Tab behavior for now
+        // Future: could implement custom column navigation
+    }
+}, false);
+
+// Export functions
+function toggleExportMenu() {
+    const menu = document.getElementById('exportMenu');
+    if (menu) {
+        menu.style.display = menu.style.display === 'none' ? 'flex' : 'none';
+    }
+}
+
+function exportAsImage() {
+    showStatus('Image export requires html2canvas library. Please add it to use this feature.', 'info');
+    // Note: html2canvas would need to be added as a dependency for this to work
+}
+
+function exportMetadataJSON() {
+    if (selectedIndices.size === 0) {
+        showStatus('No fonts selected to export', 'error');
+        return;
+    }
+    
+    const selectedFonts = Array.from(selectedIndices).map(idx => fonts[idx]);
+    const exportData = selectedFonts.map(font => ({
+        filename: font.filename,
+        family: font.family,
+        subfamily: font.subfamily,
+        fullName: font.fullName,
+        postscriptName: font.postscriptName,
+        glyphs: font.glyphs,
+        weightClass: font.weightClass,
+        widthClass: font.widthClass,
+        format: font.format,
+        size: font.size,
+        isVariable: font.isVariable,
+        variableAxes: font.variableAxes,
+        hasOpenTypeFeatures: font.hasOpenTypeFeatures,
+        features: font.features?.map(f => typeof f === 'string' ? f : f.tag) || []
+    }));
+    
+    const json = JSON.stringify(exportData, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `font-metadata-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showStatus('Metadata exported as JSON', 'success');
+}
+
+function exportMetadataCSV() {
+    if (selectedIndices.size === 0) {
+        showStatus('No fonts selected to export', 'error');
+        return;
+    }
+    
+    const selectedFonts = Array.from(selectedIndices).map(idx => fonts[idx]);
+    const headers = ['Filename', 'Family', 'Subfamily', 'Full Name', 'Glyphs', 'Weight Class', 'Format', 'Size', 'Variable', 'OpenType Features'];
+    const rows = selectedFonts.map(font => [
+        font.filename,
+        font.family,
+        font.subfamily,
+        font.fullName,
+        font.glyphs,
+        font.weightClass,
+        font.format,
+        font.size,
+        font.isVariable ? 'Yes' : 'No',
+        (font.features?.map(f => typeof f === 'string' ? f : f.tag).join('; ') || 'None')
+    ]);
+    
+    const csv = [
+        headers.join(','),
+        ...rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+    ].join('\n');
+    
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `font-metadata-${Date.now()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showStatus('Metadata exported as CSV', 'success');
+}
+
+function copyFontInfo() {
+    if (selectedIndices.size === 0) {
+        showStatus('No fonts selected to copy', 'error');
+        return;
+    }
+    
+    const selectedFonts = Array.from(selectedIndices).map(idx => fonts[idx]);
+    const text = selectedFonts.map(font => 
+        `${font.filename}\nFamily: ${font.family}\nSubfamily: ${font.subfamily}\nGlyphs: ${font.glyphs}\nWeight: ${font.weightClass}\nFormat: ${font.format}\nSize: ${font.size}`
+    ).join('\n\n');
+    
+    navigator.clipboard.writeText(text).then(() => {
+        showStatus('Font info copied to clipboard', 'success');
+    }).catch(err => {
+        showStatus('Failed to copy to clipboard', 'error');
+        console.error('Copy error:', err);
+    });
+}
+
+// Make export functions globally accessible
+window.toggleExportMenu = toggleExportMenu;
+window.exportAsImage = exportAsImage;
+window.exportMetadataJSON = exportMetadataJSON;
+window.exportMetadataCSV = exportMetadataCSV;
+window.copyFontInfo = copyFontInfo;
 
 // View mode toggle functions
 function setViewMode(mode) {
@@ -601,16 +713,46 @@ function updateViewModeUI() {
     } else {
         selectionInfo.textContent = 'Select fonts to compare';
     }
+    // Re-sync header heights after content change
+    syncHeaderHeights();
+}
+
+// Sync header heights between logo-header and main-header
+function syncHeaderHeights() {
+    const logoHeader = document.querySelector('.logo-header');
+    const mainHeader = document.querySelector('.main-header');
+    
+    if (logoHeader && mainHeader) {
+        // Reset heights to get natural heights
+        logoHeader.style.minHeight = '';
+        mainHeader.style.minHeight = '';
+        
+        // Get both heights
+        const logoHeight = logoHeader.offsetHeight;
+        const mainHeight = mainHeader.offsetHeight;
+        
+        // Use the taller height for both
+        const maxHeight = Math.max(logoHeight, mainHeight);
+        logoHeader.style.minHeight = `${maxHeight}px`;
+        mainHeader.style.minHeight = `${maxHeight}px`;
+    }
 }
 
 // Initialize view mode UI on page load
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
         updateViewModeUI();
+        syncHeaderHeights();
     });
 } else {
     updateViewModeUI();
+    syncHeaderHeights();
 }
+
+// Re-sync header heights on window resize (in case content changes)
+window.addEventListener('resize', () => {
+    syncHeaderHeights();
+});
 
 // Make preview text functions globally accessible
 window.setViewMode = setViewMode;
@@ -618,7 +760,7 @@ window.setViewMode = setViewMode;
 // Re-align rows on window resize
 window.addEventListener('resize', () => {
     if (selectedIndices.size > 0) {
-        alignMetadataRows();
+        debouncedAlignMetadataRows();
         // Re-render in gallery mode to update column count
         if (viewMode === 'gallery') {
             updateComparison();
@@ -673,30 +815,188 @@ async function handleFiles(fileList) {
         return;
     }
 
-    showStatus(`Processing ${files.length} font file(s)...`);
+    // File size validation
+    const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+    const WARN_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+    const validFiles = [];
+    const rejectedFiles = [];
 
     for (const file of files) {
+        const fileSizeMB = file.size / (1024 * 1024);
+        
+        if (file.size > MAX_FILE_SIZE) {
+            rejectedFiles.push({ name: file.name, size: fileSizeMB });
+            showStatus(`Skipped ${file.name}: File too large (${fileSizeMB.toFixed(1)} MB). Maximum size is 50 MB.`, 'error');
+        } else {
+            if (file.size > WARN_FILE_SIZE) {
+                showStatus(`Font file ${file.name} is very large (${fileSizeMB.toFixed(1)} MB). This may take a while to load.`, 'warning');
+            }
+            validFiles.push(file);
+        }
+    }
+    
+    if (validFiles.length === 0) {
+        showStatus('No valid font files to process (all files were too large)', 'error');
+        return;
+    }
+    
+    if (rejectedFiles.length > 0 && validFiles.length > 0) {
+        showStatus(`Processing ${validFiles.length} font file(s)... (${rejectedFiles.length} file(s) skipped due to size)`, 'info');
+    } else {
+        showStatus(`Processing ${validFiles.length} font file(s)...`);
+    }
+
+    // Show progress indicator for 10+ fonts
+    const showProgress = validFiles.length >= 10;
+    let progressBar = null;
+    let progressContainer = null;
+    
+    if (showProgress) {
+        progressContainer = document.createElement('div');
+        progressContainer.className = 'progress-container';
+        progressContainer.innerHTML = `
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <div class="progress-text" id="progressText">Loading font 0 of ${validFiles.length}...</div>
+        `;
+        status.parentNode.insertBefore(progressContainer, status.nextSibling);
+        progressBar = document.getElementById('progressFill');
+    }
+    
+    let processedCount = 0;
+    const failedFonts = []; // Collect all failed fonts for summary
+    
+    const updateProgress = () => {
+        if (!showProgress) return;
+        processedCount++;
+        const percent = (processedCount / validFiles.length) * 100;
+        
+        requestAnimationFrame(() => {
+            if (progressBar) {
+                progressBar.style.width = `${percent}%`;
+            }
+            const progressText = document.getElementById('progressText');
+            if (progressText) {
+                progressText.textContent = `Loading font ${processedCount} of ${validFiles.length}...`;
+            }
+        });
+    };
+
+    // Process font file (extracted for batch processing)
+    async function processFontFile(file) {
         try {
             const arrayBuffer = await file.arrayBuffer();
-            const font = fontkit.create(arrayBuffer);
+            
+            // Use fontkit for metrics and general font info
+            const fontkitFont = fontkit.create(arrayBuffer);
+            
+            // Use opentype.js for OpenType feature extraction (more reliable)
+            let opentypeFont = null;
+            let features = [];
+            try {
+                // Check if opentype is available
+                if (typeof opentype === 'undefined') {
+                    console.error('opentype.js is not loaded!');
+                    throw new Error('opentype.js not available');
+                }
+                
+                opentypeFont = opentype.parse(arrayBuffer);
+                
+                // Debug: Log opentype.js structure
+                if (opentypeFont && opentypeFont.tables) {
+                    console.log(`[${file.name}] opentype.js structure:`, {
+                        hasGsub: !!opentypeFont.tables.gsub,
+                        hasGpos: !!opentypeFont.tables.gpos,
+                        hasName: !!opentypeFont.tables.name,
+                        gsubFeatures: opentypeFont.tables.gsub?.features?.length || 0,
+                        namesType: opentypeFont.names ? (Array.isArray(opentypeFont.names) ? 'array' : 'object') : 'missing',
+                        namesLength: opentypeFont.names ? (Array.isArray(opentypeFont.names) ? opentypeFont.names.length : Object.keys(opentypeFont.names).length) : 0
+                    });
+                }
+                
+                features = extractFeaturesFromOpentype(opentypeFont, fontkitFont);
+                
+                // DEBUG: Log what we actually extracted
+                if (DEBUG) {
+                    console.group(`[${file.name}] Feature Extraction Results`);
+                    console.log('Total features:', features.length);
+                    const ssFeatures = features.filter(f => f.tag && f.tag.match(/^ss\d{2}$/));
+                    console.log('Stylistic sets found:', ssFeatures.length);
+                    ssFeatures.forEach(f => {
+                        console.log(`  ${f.tag}:`, {
+                            hasLabel: !!f.label,
+                            label: f.label,
+                            uinameid: f.uinameid
+                        });
+                    });
+                    console.groupEnd();
+                }
+            } catch (opentypeError) {
+                console.warn(`Could not parse ${file.name} with opentype.js, falling back to fontkit:`, opentypeError);
+                // Fallback to fontkit extraction if opentype.js fails
+                features = extractOpenTypeFeatures(fontkitFont);
+            }
 
-            // Extract comprehensive metadata
-            const metadata = extractMetadata(font, file);
+            // Extract comprehensive metadata using fontkit
+            const metadata = extractMetadata(fontkitFont, file);
+            
+            // Override features with opentype.js results
+            metadata.features = features;
+            metadata.hasOpenTypeFeatures = features && features.length > 0;
+
+            // Cache Data URL for performance (avoid re-reading file on every comparison render)
+            const dataUrl = URL.createObjectURL(file);
 
             fonts.push({
                 id: `font_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                 ...metadata,
-                font: font,
-                file: file,
+                // Don't store font objects or file blob - only keep extracted metadata and dataUrl
+                dataUrl: dataUrl, // Cached object URL for font file
                 assignedFamily: null // User-assigned family override
             });
+            
+            // Update progress
+            updateProgress();
         } catch (error) {
-            console.error(`Error processing ${file.name}:`, error);
+            // Collect error for summary instead of showing immediately
+            failedFonts.push({ name: file.name, error: error.message });
+            // Still update progress even on error
+            updateProgress();
         }
     }
+    
+    // Batch processing for better performance
+    const BATCH_SIZE = 5;
+    for (let i = 0; i < validFiles.length; i += BATCH_SIZE) {
+        const batch = validFiles.slice(i, i + BATCH_SIZE);
+        await Promise.all(batch.map(file => processFontFile(file)));
+        // Progress is updated within processFontFile
+    }
+    
+    // Remove progress indicator when done
+    if (showProgress && progressContainer) {
+        setTimeout(() => {
+            if (progressContainer.parentNode) {
+                progressContainer.remove();
+            }
+        }, 500);
+    }
 
+    // Show summary of failed fonts if any
+    if (failedFonts.length > 0) {
+        const errorList = failedFonts.map(f => `${f.name}: ${f.error}`).join('\n');
+        const errorMessage = failedFonts.length === 1 
+            ? `Failed to load 1 font:\n${errorList}`
+            : `Failed to load ${failedFonts.length} fonts:\n${errorList}`;
+        showStatus(errorMessage, 'error');
+    }
+    
     if (fonts.length > 0) {
-        showStatus(`Successfully loaded ${fonts.length} font(s)`, 'success');
+        const successMessage = failedFonts.length > 0
+            ? `Successfully loaded ${fonts.length} font(s) (${failedFonts.length} failed)`
+            : `Successfully loaded ${fonts.length} font(s)`;
+        showStatus(successMessage, 'success');
         // Auto-expand families for newly loaded fonts
         fonts.forEach(font => {
             const family = extractFamilyName(font, font.filename);
@@ -906,9 +1206,10 @@ function extractMetadata(font, file) {
     // Check if font is fixed pitch (from post table)
     const isFixedPitch = post?.isFixedPitch || false;
 
-    // Extract features to check if font has OpenType features
-    const features = extractOpenTypeFeatures(font);
-    const hasOpenTypeFeatures = features && features.length > 0;
+    // Features will be extracted using opentype.js in handleFiles()
+    // Set defaults here - will be overridden by opentype.js extraction
+    const features = [];
+    const hasOpenTypeFeatures = false;
 
     return {
         // Basic info
@@ -1092,251 +1393,479 @@ function extractFeatureWithLabel(font, featureTag, featureRecord) {
     return { tag: featureTag, label, uinameid };
 }
 
+// Debug function to understand fontkit's structure (optional, for troubleshooting)
+function debugFontStructure(font) {
+    console.group('Font Structure Debug');
+    
+    // Check if GSUB exists
+    console.log('Has GSUB:', !!font['GSUB']);
+    console.log('Has GPOS:', !!font['GPOS']);
+    
+    if (font['GSUB']) {
+        const GSUB = font['GSUB'];
+        console.log('GSUB keys:', Object.keys(GSUB));
+        console.log('GSUB.featureList:', GSUB.featureList);
+        
+        if (GSUB.featureList) {
+            console.log('featureList type:', typeof GSUB.featureList);
+            console.log('featureList is Array:', Array.isArray(GSUB.featureList));
+            console.log('featureList keys:', Object.keys(GSUB.featureList));
+            console.log('featureList sample:', GSUB.featureList[0] || GSUB.featureList[Object.keys(GSUB.featureList)[0]]);
+        }
+    }
+    
+    if (font['GPOS']) {
+        const GPOS = font['GPOS'];
+        console.log('GPOS keys:', Object.keys(GPOS));
+        console.log('GPOS.featureList:', GPOS.featureList);
+        
+        if (GPOS.featureList) {
+            console.log('featureList type:', typeof GPOS.featureList);
+            console.log('featureList is Array:', Array.isArray(GPOS.featureList));
+            console.log('featureList keys:', Object.keys(GPOS.featureList));
+        }
+    }
+    
+    // Check _src.tables
+    if (font._src && font._src.tables) {
+        console.log('_src.tables keys:', Object.keys(font._src.tables));
+        if (font._src.tables.GSUB) {
+            console.log('_src.tables.GSUB keys:', Object.keys(font._src.tables.GSUB));
+        }
+        if (font._src.tables.GPOS) {
+            console.log('_src.tables.GPOS keys:', Object.keys(font._src.tables.GPOS));
+        }
+    }
+    
+    console.groupEnd();
+}
+
+// Helper function to look up name from opentype.js name table
+function lookupOpentypeName(opentypeFont, nameID) {
+    if (!nameID || nameID === 0) return null;
+    
+    try {
+        // Method 1: Try font.names object (most common structure in opentype.js v1.3+)
+        // Structure: font.names = { 256: { en: "Alternate Digits" }, ... }
+        if (opentypeFont.names && typeof opentypeFont.names === 'object') {
+            // Direct numeric key access
+            if (opentypeFont.names[nameID]) {
+                const nameEntry = opentypeFont.names[nameID];
+                
+                // If it's an object with language keys
+                if (typeof nameEntry === 'object') {
+                    // Try English variants first
+                    if (nameEntry.en) return String(nameEntry.en);
+                    if (nameEntry['en-US']) return String(nameEntry['en-US']);
+                    if (nameEntry['en-GB']) return String(nameEntry['en-GB']);
+                    
+                    // Get first available language
+                    const keys = Object.keys(nameEntry);
+                    if (keys.length > 0) {
+                        return String(nameEntry[keys[0]]);
+                    }
+                }
+                
+                // If it's a string directly
+                if (typeof nameEntry === 'string') {
+                    return nameEntry;
+                }
+            }
+        }
+        
+        // Method 2: Try font.tables.name.names array (alternative structure)
+        if (opentypeFont.tables && opentypeFont.tables.name && 
+            opentypeFont.tables.name.names && 
+            Array.isArray(opentypeFont.tables.name.names)) {
+            
+            const nameRecord = opentypeFont.tables.name.names.find(n => 
+                n && n.nameID === nameID
+            );
+            
+            if (nameRecord) {
+                // Try different property names
+                if (nameRecord.value) return String(nameRecord.value);
+                if (nameRecord.string) return String(nameRecord.string);
+                if (nameRecord.text) return String(nameRecord.text);
+                
+                // Try language-specific access
+                if (nameRecord.en) return String(nameRecord.en);
+                if (nameRecord['en-US']) return String(nameRecord['en-US']);
+            }
+        }
+        
+        // Method 3: Try accessing via get() method (some opentype.js versions)
+        if (opentypeFont.names && typeof opentypeFont.names.get === 'function') {
+            try {
+                const name = opentypeFont.names.get(nameID);
+                if (name) return String(name);
+            } catch (e) {
+                // get() method might not exist or fail
+            }
+        }
+        
+        // Method 4: Try array structure (older opentype.js versions)
+        if (opentypeFont.names && Array.isArray(opentypeFont.names)) {
+            const nameRecord = opentypeFont.names.find(n => n && n.nameID === nameID);
+            if (nameRecord) {
+                if (nameRecord.en) return String(nameRecord.en);
+                if (nameRecord['en-US']) return String(nameRecord['en-US']);
+                if (nameRecord['en-GB']) return String(nameRecord['en-GB']);
+                const languages = Object.keys(nameRecord).filter(k => k !== 'nameID');
+                if (languages.length > 0) {
+                    return String(nameRecord[languages[0]]);
+                }
+            }
+        }
+        
+    } catch (e) {
+        console.warn(`Error looking up name ID ${nameID}:`, e);
+    }
+    
+    return null;
+}
+
+// Extract OpenType features using opentype.js (more reliable than fontkit)
+// Uses fontkit for UINameID extraction (it exposes FeatureParams properly)
+// Uses opentype.js for name table lookup (better name table access)
+function extractFeaturesFromOpentype(opentypeFont, fontkitFont = null) {
+    const features = []; // Array of { tag, label, uinameid }
+    const featureSet = new Set();
+    
+    try {
+        // Debug: Log opentype.js structure for first feature (only once per font)
+        let debugLogged = false;
+        
+        // Extract features from GSUB table (substitution features)
+        if (opentypeFont.tables && opentypeFont.tables.gsub && opentypeFont.tables.gsub.features) {
+            opentypeFont.tables.gsub.features.forEach(feature => {
+                const tag = feature.tag;
+                if (tag && !featureSet.has(tag)) {
+                    featureSet.add(tag);
+                    
+                    // Debug: Log structure for first stylistic set
+                    if (!debugLogged && tag.match(/^ss\d{2}$/)) {
+                        console.log('Debug opentype.js feature structure:', {
+                            tag: tag,
+                            feature: feature,
+                            featureKeys: Object.keys(feature),
+                            hasFeatureObj: !!feature.feature,
+                            featureObjKeys: feature.feature ? Object.keys(feature.feature) : null,
+                            featureParams: feature.feature?.featureParams,
+                            FeatureParams: feature.feature?.FeatureParams,
+                            params: feature.feature?.params,
+                            // Try to access featureParams directly from feature
+                            directFeatureParams: feature.featureParams,
+                            directParams: feature.params,
+                            // Check all properties
+                            allFeatureKeys: feature.feature ? Object.keys(feature.feature) : [],
+                            featureObjValues: feature.feature ? Object.values(feature.feature).slice(0, 3) : null
+                        });
+                        debugLogged = true;
+                    }
+                    
+                    // Get feature label from name table if available
+                    let label = null;
+                    let uinameid = null;
+                    
+                    // PRIORITY 1: Try to extract UINameID from fontkit (it exposes FeatureParams properly)
+                    // This is more reliable than opentype.js which doesn't parse FeatureParamsStylisticSet correctly
+                    if (fontkitFont && fontkitFont.GSUB && fontkitFont.GSUB.featureList) {
+                        const featureList = fontkitFont.GSUB.featureList;
+                        const featureRecord = featureList[tag];
+                        
+                        if (featureRecord) {
+                            // Try to access FeatureParams - fontkit stores it in different ways
+                            if (featureRecord.FeatureParams && featureRecord.FeatureParams.UINameID) {
+                                uinameid = featureRecord.FeatureParams.UINameID;
+                            } else if (featureRecord.featureParams && featureRecord.featureParams.uinameid) {
+                                uinameid = featureRecord.featureParams.uinameid;
+                            } else if (featureRecord.featureParams && featureRecord.featureParams.UINameID) {
+                                uinameid = featureRecord.featureParams.UINameID;
+                            } else if (featureRecord.Feature && featureRecord.Feature.FeatureParams) {
+                                const params = featureRecord.Feature.FeatureParams;
+                                if (params.UINameID) {
+                                    uinameid = params.UINameID;
+                                }
+                            }
+                        }
+                    }
+                    
+                    // PRIORITY 2: For stylistic sets, try calculated name ID as fallback
+                    // OpenType spec: Stylistic sets typically use name IDs starting at 256
+                    // ss01 -> Name ID 256, ss02 -> Name ID 257, etc.
+                    // BUT this is not always consistent, so we prefer fontkit's UINameID
+                    if (!uinameid && tag.match(/^ss\d{2}$/)) {
+                        const ssNum = parseInt(tag.slice(2));
+                        // Calculate name ID: 256 + (ssNum - 1)
+                        // ss01 -> 256, ss02 -> 257, ss03 -> 258, etc.
+                        const calculatedNameID = 256 + (ssNum - 1);
+                        uinameid = calculatedNameID;
+                    }
+                    
+                    // PRIORITY 3: Try opentype.js featureParams (less reliable, often just a number)
+                    if (!uinameid) {
+                        let params = null;
+                        if (feature.featureParams) {
+                            params = feature.featureParams;
+                        } else if (feature.feature && feature.feature.featureParams) {
+                            params = feature.feature.featureParams;
+                        }
+                        
+                        if (params) {
+                            if (typeof params === 'number' && params > 0 && params >= 256) {
+                                // Only use if it's a valid name ID (>= 256 for user-defined)
+                                uinameid = params;
+                            } else if (typeof params === 'object') {
+                                uinameid = params.uiNameID || 
+                                          params.UINameID || 
+                                          (params.value && typeof params.value === 'number' && params.value >= 256 ? params.value : null);
+                            }
+                        }
+                    }
+                    
+                    // Look up the name using opentype.js (better name table access)
+                    if (uinameid && typeof uinameid === 'number' && uinameid > 0) {
+                        label = lookupOpentypeName(opentypeFont, uinameid);
+                    }
+                    
+                    // Fallback to getFeatureName() (handles static names, ss##, and cv##)
+                    if (!label) {
+                        label = getFeatureName(tag);
+                    }
+                    
+                    // Fallback for stylistic sets (if no custom name found)
+                    if (!label && tag.match(/^ss\d{2}$/)) {
+                        const ssNum = parseInt(tag.slice(2));
+                        label = `Stylistic Set ${ssNum}`;
+                    }
+                    
+                    // Final fallback: use tag as label
+                    if (!label) {
+                        label = `OpenType feature: ${tag}`;
+                    }
+                    
+                    features.push({ tag, label, uinameid });
+                }
+            });
+        }
+        
+        // Extract features from GPOS table (positioning features)
+        if (opentypeFont.tables && opentypeFont.tables.gpos && opentypeFont.tables.gpos.features) {
+            opentypeFont.tables.gpos.features.forEach(feature => {
+                const tag = feature.tag;
+                if (tag && !featureSet.has(tag)) {
+                featureSet.add(tag);
+                    
+                    // Get feature label from name table if available
+                    let label = null;
+                    let uinameid = null;
+                    
+                    // Check for UINameID in feature params
+                    if (feature.feature) {
+                        const featureObj = feature.feature;
+                        
+                        const params = featureObj.featureParams || 
+                                      featureObj.FeatureParams ||
+                                      featureObj.params ||
+                                      (featureObj.feature && featureObj.feature.featureParams) ||
+                                      (featureObj.feature && featureObj.feature.FeatureParams);
+                        
+                        if (params) {
+                            uinameid = params.uiNameID || 
+                                      params.UINameID || 
+                                      params.uinameid ||
+                                      params.uiNameId ||
+                                      params.version;
+                            
+                            if (typeof uinameid === 'number' && uinameid > 0) {
+                                label = lookupOpentypeName(opentypeFont, uinameid);
+                            } else {
+                                uinameid = null;
+                            }
+                        }
+                    }
+                    
+                    // Fallback to getFeatureName() (handles static names, ss##, and cv##)
+                    if (!label) {
+                        label = getFeatureName(tag);
+                    }
+                    
+                    // Final fallback
+                    if (!label) {
+                        label = `OpenType feature: ${tag}`;
+                    }
+                    
+                    features.push({ tag, label, uinameid });
+                }
+            });
+        }
+        
+        // Sort by tag
+        features.sort((a, b) => a.tag.localeCompare(b.tag));
+        
+        return features;
+    } catch (error) {
+        console.error('Error extracting OpenType features from opentype.js:', error);
+        return [];
+    }
+}
+
 function extractOpenTypeFeatures(font) {
     const features = []; // Array of { tag, label, uinameid }
     const featureSet = new Set();
     
     try {
-        // Debug: log what's available on the font object
-        // console.log('Font object keys:', Object.keys(font));
-        // console.log('Font.GSUB:', font.GSUB);
-        // console.log('Font.GPOS:', font.GPOS);
+        // Try multiple access paths to find features - fontkit structure can vary
         
-        // Method 1: Try fontkit's GSUB table access
-        if (font.GSUB) {
-            const gsub = font.GSUB;
+        // Method 1: Try font._src.tables.GSUB directly (without .table)
+        if (font._src && font._src.tables) {
+            const srcTables = font._src.tables;
             
-            // Try accessing featureList directly - fontkit stores features as keys on featureList object
-            if (gsub.featureList) {
-                const featureList = gsub.featureList;
-                
-                // featureList might be an object with feature tags as keys
-                const featureListKeys = Object.keys(featureList);
-                featureListKeys.forEach(key => {
-                    // Keys might be feature tags directly, or indices
-                    // If it's a 4-character string, it's likely a feature tag
-                    if (key.length === 4 && /^[a-z0-9]{4}$/.test(key)) {
-                        if (!featureSet.has(key)) {
+            // Try GSUB directly
+            if (srcTables.GSUB) {
+                try {
+                    // Try srcTables.GSUB.FeatureList directly
+                    if (srcTables.GSUB.FeatureList && srcTables.GSUB.FeatureList.FeatureRecord) {
+                        srcTables.GSUB.FeatureList.FeatureRecord.forEach(record => {
+                            const tag = record.FeatureTag || record.tag || record.featureTag;
+                            if (tag && !featureSet.has(tag)) {
+                    featureSet.add(tag);
+                                const featureInfo = extractFeatureWithLabel(font, tag, record);
+                                features.push(featureInfo);
+                            }
+                        });
+                    }
+                    // Try srcTables.GSUB.table.FeatureList
+                    if (srcTables.GSUB.table && srcTables.GSUB.table.FeatureList && srcTables.GSUB.table.FeatureList.FeatureRecord) {
+                        srcTables.GSUB.table.FeatureList.FeatureRecord.forEach(record => {
+                            const tag = record.FeatureTag || record.tag || record.featureTag;
+                            if (tag && !featureSet.has(tag)) {
+                    featureSet.add(tag);
+                                const featureInfo = extractFeatureWithLabel(font, tag, record);
+                                features.push(featureInfo);
+                            }
+                        });
+                    }
+                } catch (e) {
+                    console.warn('Error extracting GSUB features from _src.tables:', e);
+                }
+            }
+            
+            // Try GPOS directly
+            if (srcTables.GPOS) {
+                try {
+                    if (srcTables.GPOS.FeatureList && srcTables.GPOS.FeatureList.FeatureRecord) {
+                        srcTables.GPOS.FeatureList.FeatureRecord.forEach(record => {
+                            const tag = record.FeatureTag || record.tag || record.featureTag;
+                            if (tag && !featureSet.has(tag)) {
+                                featureSet.add(tag);
+                                const featureInfo = extractFeatureWithLabel(font, tag, record);
+                                features.push(featureInfo);
+                    }
+                });
+            }
+                    if (srcTables.GPOS.table && srcTables.GPOS.table.FeatureList && srcTables.GPOS.table.FeatureList.FeatureRecord) {
+                        srcTables.GPOS.table.FeatureList.FeatureRecord.forEach(record => {
+                            const tag = record.FeatureTag || record.tag || record.featureTag;
+                            if (tag && !featureSet.has(tag)) {
+                                featureSet.add(tag);
+                                const featureInfo = extractFeatureWithLabel(font, tag, record);
+                                features.push(featureInfo);
+                            }
+                        });
+                    }
+                } catch (e) {
+                    console.warn('Error extracting GPOS features from _src.tables:', e);
+                }
+            }
+        }
+        
+        // Method 2: Try font.GSUB.table (if fontkit exposes it directly)
+        if (font.GSUB) {
+            try {
+                // Try font.GSUB.table.FeatureList
+                if (font.GSUB.table && font.GSUB.table.FeatureList && font.GSUB.table.FeatureList.FeatureRecord) {
+                    font.GSUB.table.FeatureList.FeatureRecord.forEach(record => {
+                        const tag = record.FeatureTag || record.tag || record.featureTag;
+                        if (tag && !featureSet.has(tag)) {
+                            featureSet.add(tag);
+                            const featureInfo = extractFeatureWithLabel(font, tag, record);
+                            features.push(featureInfo);
+                        }
+                    });
+                }
+                // Try font.GSUB.featureList (common fontkit structure)
+                if (font.GSUB.featureList) {
+                    const featureList = font.GSUB.featureList;
+                    
+                    // Check if featureList has featureRecords array
+                    if (featureList.featureRecords && Array.isArray(featureList.featureRecords)) {
+                            featureList.featureRecords.forEach(record => {
+                                const tag = record.tag || record.FeatureTag || record.featureTag;
+                            if (tag && !featureSet.has(tag)) {
+                                    featureSet.add(tag);
+                                const featureInfo = extractFeatureWithLabel(font, tag, record);
+                                features.push(featureInfo);
+                                }
+                            });
+                        }
+                    
+                    // Also check if featureList is an object with feature tags as keys
+                    Object.keys(featureList).forEach(key => {
+                        if (key.length === 4 && /^[a-z0-9]{4}$/.test(key) && !featureSet.has(key)) {
                             featureSet.add(key);
                             const featureInfo = extractFeatureWithLabel(font, key, featureList[key]);
                             features.push(featureInfo);
                         }
-                    }
-                });
-                
-                // Also try featureRecords array if it exists
-                if (featureList.featureRecords && Array.isArray(featureList.featureRecords)) {
-                    featureList.featureRecords.forEach(record => {
-                        if (record && record.tag && !featureSet.has(record.tag)) {
-                            featureSet.add(record.tag);
-                            const featureInfo = extractFeatureWithLabel(font, record.tag, record);
-                            features.push(featureInfo);
-                        }
                     });
-                }
-                
-                // Try iterating over featureList values - they might be feature objects
-                Object.entries(featureList).forEach(([key, value]) => {
-                    if (value && typeof value === 'object') {
-                        const tag = value.tag || value.FeatureTag || key;
-                        if (tag && tag.length === 4 && /^[a-z0-9]{4}$/.test(tag) && !featureSet.has(tag)) {
-                            featureSet.add(tag);
-                            const featureInfo = extractFeatureWithLabel(font, tag, value);
-                            features.push(featureInfo);
-                        }
                     }
-                });
-            }
-            
-            // Try accessing via table property (fontkit might nest it)
-            if (gsub.table && gsub.table.featureList) {
-                const featureList = gsub.table.featureList;
-                if (featureList.featureRecords && Array.isArray(featureList.featureRecords)) {
-                    featureList.featureRecords.forEach(record => {
-                        if (record && record.tag) {
-                            featureSet.add(record.tag);
-                        }
-                    });
-                }
-            }
-            
-            // Try direct features property
-            if (gsub.features && typeof gsub.features === 'object') {
-                Object.keys(gsub.features).forEach(tag => {
-                    featureSet.add(tag);
-                });
+                } catch (e) {
+                console.warn('Error extracting GSUB features from font.GSUB:', e);
             }
         }
         
-        // Method 2: Try fontkit's GPOS table access
+        // Method 3: Try font.GPOS.table and font.GPOS.featureList
         if (font.GPOS) {
-            const gpos = font.GPOS;
-            
-            if (gpos.featureList) {
-                const featureList = gpos.featureList;
-                
-                // featureList might be an object with feature tags as keys
-                const featureListKeys = Object.keys(featureList);
-                featureListKeys.forEach(key => {
-                    // Keys might be feature tags directly
-                    if (key.length === 4 && /^[a-z0-9]{4}$/.test(key)) {
-                        featureSet.add(key);
-                    }
-                });
-                
-                // Also try featureRecords array if it exists
-                if (featureList.featureRecords && Array.isArray(featureList.featureRecords)) {
-                    featureList.featureRecords.forEach(record => {
-                        if (record && record.tag) {
-                            featureSet.add(record.tag);
+            try {
+                if (font.GPOS.table && font.GPOS.table.FeatureList && font.GPOS.table.FeatureList.FeatureRecord) {
+                    font.GPOS.table.FeatureList.FeatureRecord.forEach(record => {
+                        const tag = record.FeatureTag || record.tag || record.featureTag;
+                        if (tag && !featureSet.has(tag)) {
+                            featureSet.add(tag);
+                            const featureInfo = extractFeatureWithLabel(font, tag, record);
+                            features.push(featureInfo);
                         }
                     });
                 }
-                
-                // Try iterating over featureList values
-                Object.values(featureList).forEach(value => {
-                    if (value && typeof value === 'object') {
-                        if (value.tag) featureSet.add(value.tag);
-                        if (value.FeatureTag) featureSet.add(value.FeatureTag);
-                    }
-                });
-            }
-            
-            if (gpos.table && gpos.table.featureList) {
-                const featureList = gpos.table.featureList;
-                if (featureList.featureRecords && Array.isArray(featureList.featureRecords)) {
-                    featureList.featureRecords.forEach(record => {
-                        if (record && record.tag) {
-                            featureSet.add(record.tag);
-                        }
-                    });
-                }
-            }
-            
-            if (gpos.features && typeof gpos.features === 'object') {
-                Object.keys(gpos.features).forEach(tag => {
-                    featureSet.add(tag);
-                });
-            }
-        }
-        
-        // Method 3: Try accessing via font._src (internal fontkit structure)
-        if (font._src) {
-            const src = font._src;
-            
-            // Try GSUB from source
-            if (src.GSUB) {
-                const gsub = src.GSUB;
-                if (gsub.featureList && gsub.featureList.featureRecords) {
-                    gsub.featureList.featureRecords.forEach(record => {
-                        if (record && record.tag) {
-                            featureSet.add(record.tag);
-                        }
-                    });
-                }
-            }
-            
-            // Try GPOS from source
-            if (src.GPOS) {
-                const gpos = src.GPOS;
-                if (gpos.featureList && gpos.featureList.featureRecords) {
-                    gpos.featureList.featureRecords.forEach(record => {
-                        if (record && record.tag) {
-                            featureSet.add(record.tag);
-                        }
-                    });
-                }
-            }
-        }
-        
-        // Method 4: Try direct font.features property
-        if (font.features && typeof font.features === 'object') {
-            Object.keys(font.features).forEach(tag => {
-                featureSet.add(tag);
-            });
-        }
-        
-        // Method 5: Try accessing via font.layout (fontkit might use this)
-        if (font.layout) {
-            const layout = font.layout;
-            if (layout.GSUB && layout.GSUB.features) {
-                Object.keys(layout.GSUB.features).forEach(tag => {
-                    featureSet.add(tag);
-                });
-            }
-            if (layout.GPOS && layout.GPOS.features) {
-                Object.keys(layout.GPOS.features).forEach(tag => {
-                    featureSet.add(tag);
-                });
-            }
-        }
-        
-        // Method 6: Try accessing raw table data via font._tables or font.tables
-        const tables = font._tables || font.tables || {};
-        if (tables.GSUB) {
-            const gsub = tables.GSUB;
-            if (gsub.featureList && gsub.featureList.featureRecords) {
-                gsub.featureList.featureRecords.forEach(record => {
-                    if (record && (record.tag || record.FeatureTag)) {
-                        featureSet.add(record.tag || record.FeatureTag);
-                    }
-                });
-            }
-        }
-        if (tables.GPOS) {
-            const gpos = tables.GPOS;
-            if (gpos.featureList && gpos.featureList.featureRecords) {
-                gpos.featureList.featureRecords.forEach(record => {
-                    if (record && (record.tag || record.FeatureTag)) {
-                        featureSet.add(record.tag || record.FeatureTag);
-                    }
-                });
-            }
-        }
-        
-        // Method 7: Try parsing from font._src.tables (most direct access)
-        if (font._src && font._src.tables) {
-            const srcTables = font._src.tables;
-            if (srcTables.GSUB) {
-                try {
-                    const gsubTable = srcTables.GSUB;
-                    // Try to access featureList from the parsed table
-                    if (gsubTable.featureList) {
-                        const featureList = gsubTable.featureList;
-                        if (featureList.featureRecords) {
+                if (font.GPOS.featureList) {
+                    const featureList = font.GPOS.featureList;
+                    
+                    if (featureList.featureRecords && Array.isArray(featureList.featureRecords)) {
                             featureList.featureRecords.forEach(record => {
                                 const tag = record.tag || record.FeatureTag || record.featureTag;
-                                if (tag) {
+                            if (tag && !featureSet.has(tag)) {
                                     featureSet.add(tag);
+                                const featureInfo = extractFeatureWithLabel(font, tag, record);
+                                features.push(featureInfo);
                                 }
                             });
                         }
-                    }
-                } catch (e) {
-                    // Table might not be parsed yet
-                }
-            }
-            if (srcTables.GPOS) {
-                try {
-                    const gposTable = srcTables.GPOS;
-                    if (gposTable.featureList) {
-                        const featureList = gposTable.featureList;
-                        if (featureList.featureRecords) {
-                            featureList.featureRecords.forEach(record => {
-                                const tag = record.tag || record.FeatureTag || record.featureTag;
-                                if (tag) {
-                                    featureSet.add(tag);
-                                }
-                            });
+                    
+                    Object.keys(featureList).forEach(key => {
+                        if (key.length === 4 && /^[a-z0-9]{4}$/.test(key) && !featureSet.has(key)) {
+                            featureSet.add(key);
+                            const featureInfo = extractFeatureWithLabel(font, key, featureList[key]);
+                            features.push(featureInfo);
                         }
+                    });
                     }
                 } catch (e) {
-                    // Table might not be parsed yet
-                }
+                console.warn('Error extracting GPOS features from font.GPOS:', e);
             }
         }
         
-        // If we didn't get features with labels, fall back to just tags
+        // If we still have no features but have tags in the set, create feature info
         if (features.length === 0 && featureSet.size > 0) {
             Array.from(featureSet).sort().forEach(tag => {
                 const featureInfo = extractFeatureWithLabel(font, tag, null);
@@ -1347,19 +1876,13 @@ function extractOpenTypeFeatures(font) {
         // Sort by tag
         features.sort((a, b) => a.tag.localeCompare(b.tag));
         
-        // Debug logging - only log if still no features found after all methods
-        if (features.length === 0) {
-            console.log('No features found after all extraction methods. Inspecting structure...');
-            if (font.GSUB && font.GSUB.featureList) {
-                const featureList = font.GSUB.featureList;
-                console.log('GSUB.featureList keys:', Object.keys(featureList));
-                console.log('GSUB.featureList sample value:', Object.values(featureList)[0]);
-            }
-        }
-        
         return features;
     } catch (error) {
-        console.warn('Error extracting OpenType features:', error);
+        console.error('Error extracting OpenType features:', error);
+        // Show user-visible error feedback
+        // Note: Can't find font by reference anymore since we don't store font objects
+        // This is just a warning, so we can skip the lookup
+        console.warn('Failed to extract OpenType features from font');
         return [];
     }
 }
@@ -1404,7 +1927,7 @@ function renderFontList() {
     // Empty state
     if (fonts.length === 0) {
         fontList.innerHTML = `
-            <div class="font-list-browse"><button class="btn" onclick="browseFonts(event)">𝓕 Load Fonts</button></div>
+            <div class="font-list-browse"><button class="btn" onclick="browseFonts(event)">🇫 Browse Fonts</button></div>
             <div class="empty-state">
                 <h4>NO FONTS LOADED</h4>
                 <small>Drag and Drop Fonts Here</small>
@@ -1415,7 +1938,7 @@ function renderFontList() {
     }
 
     // Add browse button at top
-    let html = '<div class="font-list-browse"><button class="btn" onclick="browseFonts(event)">𝓕 Load Fonts</button></div>';
+    let html = '<div class="font-list-browse"><button class="btn" onclick="browseFonts(event)">🇫 Browse Fonts</button></div>';
     
     // Group fonts by family
     const grouped = groupFontsByFamily(fonts);
@@ -1456,10 +1979,7 @@ function renderFontList() {
         html += `
             <div class="font-family-group ${expandedClass}" data-family-name="${escapeHtml(family)}">
                 <div class="font-family-header" 
-                     draggable="true"
                      data-family-name="${escapeHtml(family)}"
-                     ondragstart="handleFamilyDragStart(event, '${escapeHtml(family)}')"
-                     ondragend="handleFamilyDragEnd(event)"
                      onclick="toggleFamily('${escapeHtml(family)}')">
                     <span class="family-drag-handle" title="Drag to reorder or remove">⋮⋮</span>
                     <span class="family-arrow" onclick="event.stopPropagation(); toggleFamily('${escapeHtml(family)}')">${arrow}</span>
@@ -1476,31 +1996,49 @@ function renderFontList() {
     
     fontList.innerHTML = html;
     
-    // Attach drag handlers after rendering
-    attachFontDragHandlers();
+    // Initialize SortableJS after rendering
+    initializeSortableJS();
 }
 
 // Render individual font item
 function renderFontItem(fontData, index) {
     const isSelected = selectedIndices.has(index);
     
-    // Generate badges
+    // Get column index if font is selected to check active states
+    const columnIndex = isSelected ? getColumnIndexForFont(index) : null;
+    const isInVariableMode = columnIndex !== null && variableMode.has(columnIndex);
+    const isInOTMode = columnIndex !== null && otMode.has(columnIndex);
+    
+    // Generate badges with click handlers and active states
     let badgesHtml = '';
     if (fontData.isVariable) {
-        badgesHtml += '<span class="font-list-badge vf-badge" title="Variable Font">VF</span>';
+        const vfActiveClass = isInVariableMode ? ' vf-badge-active' : '';
+        badgesHtml += `<span class="font-list-badge vf-badge${vfActiveClass}" 
+                             title="Variable Font - Click to toggle controls"
+                             data-font-index="${index}"
+                             tabindex="0"
+                             role="button"
+                             aria-label="Toggle variable font controls for ${fontData.filename}"
+                             onclick="toggleVariableModeForFont(${index}, event)"
+                             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleVariableModeForFont(${index}, event);}">VF</span>`;
     }
     if (fontData.hasOpenTypeFeatures) {
-        badgesHtml += '<span class="font-list-badge ot-badge" title="OpenType Features">O</span>';
+        const otActiveClass = isInOTMode ? ' ot-badge-active' : '';
+        badgesHtml += `<span class="font-list-badge ot-badge${otActiveClass}" 
+                             title="OpenType Features - Click to toggle controls"
+                             data-font-index="${index}"
+                             tabindex="0"
+                             role="button"
+                             aria-label="Toggle OpenType features for ${fontData.filename}"
+                             onclick="toggleOpenTypeModeForFont(${index}, event)"
+                             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleOpenTypeModeForFont(${index}, event);}">O</span>`;
     }
     
     return `
         <div class="font-item ${isSelected ? 'selected' : ''}"
              data-font-index="${index}" 
-             data-drag-type="font"
-             onclick="toggleSelection(${index}, event)" 
-             draggable="true"
-             ondragstart="handleFontDragStart(event, ${index})"
-             ondragend="handleFontDragEnd(event)">
+             data-font-id="${fontData.id}"
+             onclick="toggleSelection(${index}, event)">
             <span class="font-drag-handle" title="Drag to reorder or remove">⋮⋮</span>
             ${badgesHtml}
             <span class="font-name">${escapeHtml(fontData.filename)}</span>
@@ -1510,6 +2048,12 @@ function renderFontItem(fontData, index) {
 }
 
 function removeFont(index) {
+    // Revoke object URL to prevent memory leak
+    const fontData = fonts[index];
+    if (fontData && fontData.dataUrl && fontData.dataUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(fontData.dataUrl);
+    }
+    
     // Remove from fonts array
     fonts.splice(index, 1);
     
@@ -1566,7 +2110,20 @@ function removeFont(index) {
     activeFeatures = newActiveFeatures;
     
     // Clear font face styles
-    fontFaceStyleElements.forEach(el => el.remove());
+    // Clean up style elements from map first
+    fontFaceStyleMap.forEach(info => {
+        if (info.styleElement && info.styleElement.parentNode) {
+            info.styleElement.remove();
+        }
+    });
+    fontFaceStyleMap.clear();
+    
+    // Clean up any remaining style elements
+    fontFaceStyleElements.forEach(el => {
+        if (el.parentNode) {
+            el.remove();
+        }
+    });
     fontFaceStyleElements = [];
     
     // Re-render list and update comparison
@@ -1575,6 +2132,13 @@ function removeFont(index) {
 }
 
 function clearAllFonts() {
+    // Revoke all object URLs to prevent memory leaks
+    fonts.forEach(fontData => {
+        if (fontData.dataUrl && fontData.dataUrl.startsWith('blob:')) {
+            URL.revokeObjectURL(fontData.dataUrl);
+        }
+    });
+    
     // Clear all arrays and sets
     fonts = [];
     selectedIndices.clear();
@@ -1585,7 +2149,20 @@ function clearAllFonts() {
     activeFeatures = {};
     
     // Clear font face styles
-    fontFaceStyleElements.forEach(el => el.remove());
+    // Clean up style elements from map first
+    fontFaceStyleMap.forEach(info => {
+        if (info.styleElement && info.styleElement.parentNode) {
+            info.styleElement.remove();
+        }
+    });
+    fontFaceStyleMap.clear();
+    
+    // Clean up any remaining style elements
+    fontFaceStyleElements.forEach(el => {
+        if (el.parentNode) {
+            el.remove();
+        }
+    });
     fontFaceStyleElements = [];
     
     // Reset UI
@@ -1639,476 +2216,290 @@ if (clearAllBtn) {
     clearAllBtn.addEventListener('click', clearAllFonts);
 }
 
-// Drag and drop handlers for font items
-let draggedFontIndex = null;
-let draggedFontElement = null;
-let draggedFamilyName = null;
+// SortableJS instances for drag-and-drop
+let sortableInstances = [];
 
-function handleFontDragStart(event, index) {
-    draggedFontIndex = index;
-    draggedFontElement = event.target;
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', index.toString());
+// Initialize SortableJS for drag-and-drop
+function initializeSortableJS() {
+    // Destroy existing instances
+    sortableInstances.forEach(instance => {
+        if (instance && instance.el) {
+            instance.destroy();
+        }
+    });
+    sortableInstances = [];
     
-    // Add dragging class for visual feedback
-    event.target.classList.add('dragging');
-    
-    // Show trash zone
+    // Create trash zone if it doesn't exist
     const trash = createTrashZone();
-    trash.classList.add('visible');
     
-    // Create ghost image
-    const dragImage = event.target.cloneNode(true);
-    dragImage.style.opacity = '0.5';
-    dragImage.style.transform = 'rotate(2deg)';
-    dragImage.style.position = 'absolute';
-    dragImage.style.top = '-1000px';
-    document.body.appendChild(dragImage);
-    event.dataTransfer.setDragImage(dragImage, event.offsetX, event.offsetY);
-    setTimeout(() => {
-        if (document.body.contains(dragImage)) {
-            document.body.removeChild(dragImage);
-        }
-    }, 0);
-}
-
-function handleFontDragEnd(event) {
-    // Hide trash zone
-    if (trashZone) {
-        trashZone.classList.remove('visible', 'drag-over-trash');
-    }
+    // Track if item is being dragged over trash zone
+    let isDraggingOverTrash = false;
     
-    draggedFontIndex = null;
-    draggedFontElement = null;
-    event.target.classList.remove('dragging');
-    
-    // Remove all drop indicators
-    document.querySelectorAll('.drop-indicator').forEach(el => el.remove());
-    document.querySelectorAll('.font-item.drag-over').forEach(el => el.classList.remove('drag-over'));
-    document.querySelectorAll('.font-family-items.drag-over').forEach(el => el.classList.remove('drag-over'));
-}
-
-// Family drag handlers
-function handleFamilyDragStart(event, familyName) {
-    draggedFamilyName = familyName;
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', familyName);
-    event.currentTarget.classList.add('dragging');
-    
+    // Initialize SortableJS for each family's font items container
+    document.querySelectorAll('.font-family-items').forEach(container => {
+        const sortable = new Sortable(container, {
+            group: 'shared', // Allow dragging between families
+            animation: 150,
+            fallbackOnBody: true,
+            swapThreshold: 0.65,
+            handle: '.font-item', // Entire item is draggable
+            ghostClass: 'sortable-ghost',
+            chosenClass: 'sortable-chosen',
+            dragClass: 'sortable-drag',
+            onStart: function(evt) {
     // Show trash zone
-    const trash = createTrashZone();
     trash.classList.add('visible');
-    
-    event.stopPropagation(); // Prevent font-level drag
-}
-
-function handleFamilyDragEnd(event) {
-    draggedFamilyName = null;
-    event.currentTarget.classList.remove('dragging');
-    
-    if (trashZone) {
-        trashZone.classList.remove('visible', 'drag-over-trash');
-    }
-    
-    document.querySelectorAll('.drop-indicator').forEach(el => el.remove());
-    document.querySelectorAll('.font-family-header.drag-over').forEach(el => el.classList.remove('drag-over'));
-}
-
-// Family header drag handlers for reordering
-function handleFamilyHeaderDragOver(event) {
-    if (draggedFamilyName === null) return;
-    
-    const targetFamily = event.currentTarget.getAttribute('data-family-name');
-    if (targetFamily === draggedFamilyName) {
-        event.dataTransfer.dropEffect = 'none';
+                isDraggingOverTrash = false;
+            },
+            onMove: function(evt, originalEvent) {
+                // Check if dragging over trash zone during move
+                const trashRect = trash.getBoundingClientRect();
+                const pointer = originalEvent.touches ? originalEvent.touches[0] : originalEvent;
+                const pointerX = pointer.clientX;
+                const pointerY = pointer.clientY;
+                
+                const isOverTrash = (
+                    pointerX >= trashRect.left &&
+                    pointerX <= trashRect.right &&
+                    pointerY >= trashRect.top &&
+                    pointerY <= trashRect.bottom
+                );
+                
+                if (isOverTrash) {
+                    if (!isDraggingOverTrash) {
+                        isDraggingOverTrash = true;
+                        trash.classList.add('drag-over-trash');
+                    }
+                } else {
+                    if (isDraggingOverTrash) {
+                        isDraggingOverTrash = false;
+                        trash.classList.remove('drag-over-trash');
+                    }
+                }
+            },
+            onEnd: function(evt) {
+                // Hide trash zone
+                trash.classList.remove('visible', 'drag-over-trash');
+                
+                const item = evt.item;
+                
+                // Check if dropped in trash zone (use the flag set during drag)
+                if (isDraggingOverTrash) {
+                    // Remove font
+                    const fontIndex = parseInt(item.getAttribute('data-font-index'));
+                    if (!isNaN(fontIndex)) {
+                        removeFont(fontIndex);
+                    }
+                    isDraggingOverTrash = false;
         return;
     }
     
-    event.preventDefault();
-    event.stopPropagation();
-    event.dataTransfer.dropEffect = 'move';
-}
-
-function handleFamilyHeaderDragEnter(event) {
-    if (draggedFamilyName === null) return;
-    
-    const targetFamily = event.currentTarget.getAttribute('data-family-name');
-    if (targetFamily !== draggedFamilyName) {
-        event.currentTarget.classList.add('drag-over');
-        
-        // Show drop indicator
-        document.querySelectorAll('.drop-indicator').forEach(el => el.remove());
-        
-        const rect = event.currentTarget.getBoundingClientRect();
-        const indicator = document.createElement('div');
-        indicator.className = 'drop-indicator';
-        indicator.style.position = 'fixed';
-        indicator.style.left = `${rect.left}px`;
-        indicator.style.width = `${rect.width}px`;
-        indicator.style.height = '2px';
-        indicator.style.backgroundColor = 'var(--color-primary)';
-        indicator.style.zIndex = '1000';
-        indicator.style.pointerEvents = 'none';
-        indicator.style.top = `${rect.top}px`;
-        document.body.appendChild(indicator);
-    }
-}
-
-function handleFamilyHeaderDragLeave(event) {
-    event.currentTarget.classList.remove('drag-over');
-}
-
-function handleFamilyHeaderDrop(event) {
-    event.preventDefault();
-    event.stopPropagation();
-    
-    if (draggedFamilyName === null) return;
-    
-    const targetFamily = event.currentTarget.getAttribute('data-family-name');
-    if (targetFamily === draggedFamilyName) {
-        event.currentTarget.classList.remove('drag-over');
-        document.querySelectorAll('.drop-indicator').forEach(el => el.remove());
-        return;
-    }
-    
-    // Reorder families
-    const draggedIndex = familyOrder.indexOf(draggedFamilyName);
-    const targetIndex = familyOrder.indexOf(targetFamily);
-    
-    if (draggedIndex !== -1 && targetIndex !== -1 && draggedIndex !== targetIndex) {
-        // Remove dragged family from its current position
-        familyOrder.splice(draggedIndex, 1);
-        
-        // Calculate new target index (adjust if dragged was before target)
-        // If we removed an item before the target, target index shifts down by 1
-        const newTargetIndex = draggedIndex < targetIndex ? targetIndex - 1 : targetIndex;
-        familyOrder.splice(newTargetIndex, 0, draggedFamilyName);
-        
-        // Re-render
-        renderFontList();
-    }
-    
-    // Cleanup
-    document.querySelectorAll('.drop-indicator').forEach(el => el.remove());
-    event.currentTarget.classList.remove('drag-over');
-}
-
-// Make drag handlers globally accessible
-window.handleFontDragStart = handleFontDragStart;
-window.handleFontDragEnd = handleFontDragEnd;
-window.handleFamilyDragStart = handleFamilyDragStart;
-window.handleFamilyDragEnd = handleFamilyDragEnd;
-
-// Attach drag handlers to font items and family containers after rendering
-function attachFontDragHandlers() {
-    // Attach handlers to font items
-    const fontItems = document.querySelectorAll('.font-item[data-drag-type="font"]');
-    fontItems.forEach(item => {
-        // Remove existing listeners by cloning (keeps inline handlers)
-        const hasListeners = item.dataset.hasDragListeners === 'true';
-        if (hasListeners) {
-            // Clone to remove event listeners but keep inline handlers
-            const newItem = item.cloneNode(true);
-            item.parentNode.replaceChild(newItem, item);
-            item = newItem;
-        }
-        
-        // Mark as having listeners
-        item.dataset.hasDragListeners = 'true';
-        
-        // Attach drag handlers
-        item.addEventListener('dragover', handleFontDragOver);
-        item.addEventListener('drop', handleFontDrop);
-        item.addEventListener('dragenter', handleFontDragEnter);
-        item.addEventListener('dragleave', handleFontDragLeave);
-    });
-    
-    // Attach handlers to family item containers
-    const familyItems = document.querySelectorAll('.font-family-items');
-    familyItems.forEach(container => {
-        const hasListeners = container.dataset.hasDragListeners === 'true';
-        if (hasListeners) {
-            const newContainer = container.cloneNode(true);
-            container.parentNode.replaceChild(newContainer, container);
-            container = newContainer;
-        }
-        
-        container.dataset.hasDragListeners = 'true';
-        
-        container.addEventListener('dragover', handleFamilyItemsDragOver);
-        container.addEventListener('drop', handleFamilyItemsDrop);
-        container.addEventListener('dragenter', handleFamilyItemsDragEnter);
-        container.addEventListener('dragleave', handleFamilyItemsDragLeave);
-    });
-    
-    // Attach handlers to family headers for reordering
-    const familyHeaders = document.querySelectorAll('.font-family-header');
-    familyHeaders.forEach(header => {
-        const hasListeners = header.dataset.hasReorderListeners === 'true';
-        if (hasListeners) {
-            const newHeader = header.cloneNode(true);
-            header.parentNode.replaceChild(newHeader, header);
-            header = newHeader;
-        }
-        
-        header.dataset.hasReorderListeners = 'true';
-        
-        header.addEventListener('dragover', handleFamilyHeaderDragOver);
-        header.addEventListener('drop', handleFamilyHeaderDrop);
-        header.addEventListener('dragenter', handleFamilyHeaderDragEnter);
-        header.addEventListener('dragleave', handleFamilyHeaderDragLeave);
-    });
-}
-
-function handleFontDragOver(event) {
-    if (draggedFontIndex === null) return;
-    
-    event.preventDefault();
-    event.stopPropagation();
-    event.dataTransfer.dropEffect = 'move';
-    
-    const targetIndex = parseInt(event.currentTarget.getAttribute('data-font-index'));
-    if (targetIndex === draggedFontIndex || isNaN(targetIndex)) return;
-    
-    // Show drop indicator
-    const rect = event.currentTarget.getBoundingClientRect();
-    const isAfter = event.clientY > rect.top + rect.height / 2;
-    
-    // Remove existing indicators
-    document.querySelectorAll('.drop-indicator').forEach(el => el.remove());
-    
-    // Add indicator
-    const indicator = document.createElement('div');
-    indicator.className = 'drop-indicator';
-    indicator.style.position = 'fixed';
-    indicator.style.left = `${rect.left}px`;
-    indicator.style.width = `${rect.width}px`;
-    indicator.style.height = '2px';
-    indicator.style.backgroundColor = 'var(--color-primary)';
-    indicator.style.zIndex = '1000';
-    indicator.style.pointerEvents = 'none';
-    
-    if (isAfter) {
-        indicator.style.top = `${rect.bottom}px`;
-    } else {
-        indicator.style.top = `${rect.top}px`;
-    }
-    
-    document.body.appendChild(indicator);
-}
-
-function handleFontDragEnter(event) {
-    if (draggedFontIndex === null) return;
-    
-    const targetIndex = parseInt(event.currentTarget.getAttribute('data-font-index'));
-    if (targetIndex !== draggedFontIndex && !isNaN(targetIndex)) {
-        event.currentTarget.classList.add('drag-over');
-    }
-}
-
-function handleFontDragLeave(event) {
-    event.currentTarget.classList.remove('drag-over');
-}
-
-function handleFontDrop(event) {
-    event.preventDefault();
-    event.stopPropagation();
-    
-    if (draggedFontIndex === null) return;
-    
-    const targetIndex = parseInt(event.currentTarget.getAttribute('data-font-index'));
-    if (targetIndex === draggedFontIndex || isNaN(targetIndex)) {
-        event.currentTarget.classList.remove('drag-over');
-        return;
-    }
-    
-    // Get the target font's family to check if we're moving across families
-    const targetFont = fonts[targetIndex];
-    const draggedFont = fonts[draggedFontIndex];
-    const targetFamily = extractFamilyName(targetFont, targetFont.filename);
-    const draggedFamily = extractFamilyName(draggedFont, draggedFont.filename);
-    
-    // If moving to different family, update the font's family metadata
-    if (targetFamily !== draggedFamily) {
-        // Update the font's assigned family to match target family
-        fonts[draggedFontIndex].assignedFamily = targetFamily;
-    }
-    
-    // Reorder fonts
-    const fontToMove = fonts[draggedFontIndex];
-    if (!fontToMove) {
-        event.currentTarget.classList.remove('drag-over');
-        return;
-    }
-    
-    fonts.splice(draggedFontIndex, 1);
-    
-    const newIndex = targetIndex > draggedFontIndex ? targetIndex - 1 : targetIndex;
-    fonts.splice(newIndex, 0, fontToMove);
-    
-    // Update selected indices
-    const oldSelected = Array.from(selectedIndices);
+                // Also check coordinates as fallback
+                const trashRect = trash.getBoundingClientRect();
+                const itemRect = item.getBoundingClientRect();
+                const isInTrash = (
+                    itemRect.left < trashRect.right &&
+                    itemRect.right > trashRect.left &&
+                    itemRect.top < trashRect.bottom &&
+                    itemRect.bottom > trashRect.top
+                );
+                
+                if (isInTrash) {
+                    const fontIndex = parseInt(item.getAttribute('data-font-index'));
+                    if (!isNaN(fontIndex)) {
+                        removeFont(fontIndex);
+                    }
+                    return;
+                }
+                
+                // Store old selected indices by font ID before reordering
+                const selectedFontIds = new Set();
+                Array.from(selectedIndices).forEach(idx => {
+                    if (fonts[idx] && fonts[idx].id) {
+                        selectedFontIds.add(fonts[idx].id);
+                    }
+                });
+                
+                // Get target family from container
+                const familyGroup = container.closest('.font-family-group');
+                const familyHeader = familyGroup?.querySelector('.font-family-header');
+                const targetFamilyName = familyHeader?.querySelector('.family-name')?.textContent;
+                
+                // Rebuild fonts array based on new DOM order
+                // Get all font items in all containers in their current DOM order
+                const allFontItems = Array.from(document.querySelectorAll('.font-item'));
+                const fontIdOrder = allFontItems.map(item => {
+                    const fontId = item.getAttribute('data-font-id');
+                    if (!fontId) {
+                        // Fallback: try to get from index
+                        const idx = parseInt(item.getAttribute('data-font-index'));
+                        return fonts[idx]?.id;
+                    }
+                    return fontId;
+                }).filter(id => id);
+                
+                // Reorder fonts array to match DOM order
+                const fontMap = new Map();
+                fonts.forEach(font => {
+                    if (font.id) {
+                        fontMap.set(font.id, font);
+                    }
+                });
+                
+                const newFonts = [];
+                fontIdOrder.forEach(id => {
+                    const font = fontMap.get(id);
+                    if (font) {
+                        // Update assignedFamily if moved to different family
+                        if (targetFamilyName) {
+                            const currentFamily = extractFamilyName(font, font.filename);
+                            if (currentFamily !== targetFamilyName) {
+                                font.assignedFamily = targetFamilyName;
+                            }
+                        }
+                        newFonts.push(font);
+                    }
+                });
+                
+                // Add any fonts that weren't in DOM (shouldn't happen, but safety check)
+                fontMap.forEach((font, id) => {
+                    if (!fontIdOrder.includes(id)) {
+                        newFonts.push(font);
+                    }
+                });
+                
+                // Update fonts array
+                fonts = newFonts;
+                
+                // Update selected indices based on font IDs
     selectedIndices.clear();
-    oldSelected.forEach(oldIdx => {
-        if (oldIdx === draggedFontIndex) {
-            selectedIndices.add(newIndex);
-        } else if (oldIdx < draggedFontIndex && oldIdx >= newIndex) {
-            selectedIndices.add(oldIdx + 1);
-        } else if (oldIdx > draggedFontIndex && oldIdx <= newIndex) {
-            selectedIndices.add(oldIdx - 1);
-        } else {
-            selectedIndices.add(oldIdx);
-        }
-    });
-    
-    // Cleanup
-    document.querySelectorAll('.drop-indicator').forEach(el => el.remove());
-    event.currentTarget.classList.remove('drag-over');
-    
-    // Re-render
+                fonts.forEach((font, idx) => {
+                    if (selectedFontIds.has(font.id)) {
+                        selectedIndices.add(idx);
+                    }
+                });
+                
+                // Re-render to update indices
     renderFontList();
     updateComparison();
 }
-
-// Family container drag handlers
-function handleFamilyItemsDragOver(event) {
-    if (draggedFontIndex === null) return;
-    
-    event.preventDefault();
-    event.stopPropagation();
-    event.dataTransfer.dropEffect = 'move';
-    
-    const container = event.currentTarget;
-    const fontItems = Array.from(container.querySelectorAll('.font-item'));
-    
-    // Find the insertion point
-    const rect = container.getBoundingClientRect();
-    const mouseY = event.clientY;
-    
-    let insertIndex = -1;
-    
-    if (fontItems.length === 0) {
-        // Empty container - insert at start
-        insertIndex = 0;
-    } else {
-        // Find which item we're over or if we're at the end
-        for (let i = 0; i < fontItems.length; i++) {
-            const itemRect = fontItems[i].getBoundingClientRect();
-            if (mouseY < itemRect.top + itemRect.height / 2) {
-                // Insert before this item
-                insertIndex = parseInt(fontItems[i].getAttribute('data-font-index'));
-                break;
-            }
-        }
+        });
         
-        // If we didn't find a position, insert after last item
-        if (insertIndex === -1) {
-            const lastItem = fontItems[fontItems.length - 1];
-            const lastIndex = parseInt(lastItem.getAttribute('data-font-index'));
-            insertIndex = lastIndex + 1;
-        }
-    }
+        sortableInstances.push(sortable);
+    });
     
-    // Show drop indicator
-    document.querySelectorAll('.drop-indicator').forEach(el => el.remove());
+    // Track if family is being dragged over trash zone
+    let isDraggingFamilyOverTrash = false;
     
-    const indicator = document.createElement('div');
-    indicator.className = 'drop-indicator';
-    indicator.style.position = 'fixed';
-    indicator.style.left = `${rect.left}px`;
-    indicator.style.width = `${rect.width}px`;
-    indicator.style.height = '2px';
-    indicator.style.backgroundColor = 'var(--color-primary)';
-    indicator.style.zIndex = '1000';
-    indicator.style.pointerEvents = 'none';
-    
-    if (fontItems.length === 0 || insertIndex > parseInt(fontItems[fontItems.length - 1]?.getAttribute('data-font-index') || -1)) {
-        // At the end
-        indicator.style.top = `${rect.bottom - 2}px`;
+    // Initialize SortableJS for family group reordering
+    const familyGroupsContainer = document.querySelector('#fontList');
+    if (familyGroupsContainer) {
+        const familySortable = new Sortable(familyGroupsContainer, {
+            group: 'family-groups', // Unique group name to prevent conflicts with font items
+            animation: 150,
+            handle: '.family-drag-handle', // Only drag by handle, not entire header
+            ghostClass: 'sortable-ghost',
+            chosenClass: 'sortable-chosen',
+            dragClass: 'sortable-drag',
+            filter: '.font-list-browse, .empty-state, .font-item, .font-family-items', // Don't allow dragging these
+            onStart: function(evt) {
+                trash.classList.add('visible');
+                isDraggingFamilyOverTrash = false;
+            },
+            onMove: function(evt, originalEvent) {
+                // Check if dragging over trash zone during move
+                const trashRect = trash.getBoundingClientRect();
+                const pointer = originalEvent.touches ? originalEvent.touches[0] : originalEvent;
+                const pointerX = pointer.clientX;
+                const pointerY = pointer.clientY;
+                
+                const isOverTrash = (
+                    pointerX >= trashRect.left &&
+                    pointerX <= trashRect.right &&
+                    pointerY >= trashRect.top &&
+                    pointerY <= trashRect.bottom
+                );
+                
+                if (isOverTrash) {
+                    if (!isDraggingFamilyOverTrash) {
+                        isDraggingFamilyOverTrash = true;
+                        trash.classList.add('drag-over-trash');
+                    }
     } else {
-        // Before an item
-        const targetItem = fontItems.find(item => parseInt(item.getAttribute('data-font-index')) === insertIndex);
-        if (targetItem) {
-            const itemRect = targetItem.getBoundingClientRect();
-            indicator.style.top = `${itemRect.top}px`;
-        } else {
-            indicator.style.top = `${rect.top}px`;
-        }
-    }
-    
-    document.body.appendChild(indicator);
-    container.dataset.dropIndex = insertIndex;
-}
-
-function handleFamilyItemsDragEnter(event) {
-    if (draggedFontIndex === null) return;
-    event.currentTarget.classList.add('drag-over');
-}
-
-function handleFamilyItemsDragLeave(event) {
-    event.currentTarget.classList.remove('drag-over');
-}
-
-function handleFamilyItemsDrop(event) {
-    event.preventDefault();
-    event.stopPropagation();
-    
-    if (draggedFontIndex === null) return;
-    
-    const container = event.currentTarget;
-    const dropIndex = parseInt(container.dataset.dropIndex);
-    
-    if (isNaN(dropIndex)) {
-        container.classList.remove('drag-over');
+                    if (isDraggingFamilyOverTrash) {
+                        isDraggingFamilyOverTrash = false;
+                        trash.classList.remove('drag-over-trash');
+                    }
+                }
+            },
+            onEnd: function(evt) {
+                trash.classList.remove('visible', 'drag-over-trash');
+                
+                const item = evt.item;
+                
+                // Check if dropped in trash zone (use the flag set during drag)
+                if (isDraggingFamilyOverTrash) {
+                    // Remove entire family
+                    const familyName = item.getAttribute('data-family-name');
+                    if (familyName) {
+                        const grouped = groupFontsByFamily(fonts);
+                        const familyFonts = grouped[familyName] || [];
+                        const indicesToRemove = familyFonts.map(f => f.index).sort((a, b) => b - a);
+                        
+                        indicesToRemove.forEach(idx => {
+                            fonts.splice(idx, 1);
+                        });
+                        
+                        selectedIndices.clear();
+                        renderFontList();
+                        updateComparison();
+                    }
+                    isDraggingFamilyOverTrash = false;
         return;
     }
     
-    // Extract family name from the container's parent .font-family-group element
-    const familyGroup = container.closest('.font-family-group');
-    const familyHeader = familyGroup?.querySelector('.font-family-header');
-    const familyName = familyHeader?.querySelector('.family-name')?.textContent;
-    
-    // If dropping into a family container, set assignedFamily to that family
+                // Also check coordinates as fallback
+                const trashRect = trash.getBoundingClientRect();
+                const itemRect = item.getBoundingClientRect();
+                const isInTrash = (
+                    itemRect.left < trashRect.right &&
+                    itemRect.right > trashRect.left &&
+                    itemRect.top < trashRect.bottom &&
+                    itemRect.bottom > trashRect.top
+                );
+                
+                if (isInTrash) {
+                    const familyName = item.getAttribute('data-family-name');
     if (familyName) {
-        fonts[draggedFontIndex].assignedFamily = familyName;
-    }
-    
-    // Reorder fonts
-    const fontToMove = fonts[draggedFontIndex];
-    if (!fontToMove) {
-        container.classList.remove('drag-over');
+                        const grouped = groupFontsByFamily(fonts);
+                        const familyFonts = grouped[familyName] || [];
+                        const indicesToRemove = familyFonts.map(f => f.index).sort((a, b) => b - a);
+                        
+                        indicesToRemove.forEach(idx => {
+                            fonts.splice(idx, 1);
+                        });
+                        
+                        selectedIndices.clear();
+                        renderFontList();
+                        updateComparison();
+                    }
         return;
     }
     
-    fonts.splice(draggedFontIndex, 1);
-    
-    // Calculate new index (accounting for removal)
-    const newIndex = dropIndex > draggedFontIndex ? dropIndex - 1 : dropIndex;
-    fonts.splice(newIndex, 0, fontToMove);
-    
-    // Update selected indices
-    const oldSelected = Array.from(selectedIndices);
-    selectedIndices.clear();
-    oldSelected.forEach(oldIdx => {
-        if (oldIdx === draggedFontIndex) {
-            selectedIndices.add(newIndex);
-        } else if (oldIdx < draggedFontIndex && oldIdx >= newIndex) {
-            selectedIndices.add(oldIdx + 1);
-        } else if (oldIdx > draggedFontIndex && oldIdx <= newIndex) {
-            selectedIndices.add(oldIdx - 1);
-        } else {
-            selectedIndices.add(oldIdx);
-        }
-    });
-    
-    // Cleanup
-    document.querySelectorAll('.drop-indicator').forEach(el => el.remove());
-    container.classList.remove('drag-over');
-    delete container.dataset.dropIndex;
-    
-    // Re-render
-    renderFontList();
-    updateComparison();
+                // Reorder families only if not dropped in trash
+                const oldIndex = evt.oldIndex;
+                const newIndex = evt.newIndex;
+                if (oldIndex !== newIndex && oldIndex !== null && newIndex !== null) {
+                    const familyGroups = Array.from(familyGroupsContainer.querySelectorAll('.font-family-group'));
+                    const newFamilyOrder = familyGroups.map(group => group.getAttribute('data-family-name')).filter(f => f);
+                    familyOrder = newFamilyOrder;
+                    renderFontList();
+                }
+            }
+        });
+        
+        sortableInstances.push(familySortable);
+    }
 }
 
 // Handle drag outside sidebar for removal - trash zone
@@ -2131,51 +2522,8 @@ function createTrashZone() {
     `;
     document.body.appendChild(trashZone);
     
-    // Add drag handlers to trash zone
-    trashZone.addEventListener('dragover', (e) => {
-        if (draggedFontIndex !== null || draggedFamilyName !== null) {
-            e.preventDefault();
-            e.dataTransfer.dropEffect = 'move';
-            trashZone.classList.add('drag-over-trash');
-        }
-    });
-    
-    trashZone.addEventListener('dragleave', () => {
-        trashZone.classList.remove('drag-over-trash');
-    });
-    
-    trashZone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        
-        if (draggedFontIndex !== null) {
-            removeFont(draggedFontIndex);
-            trashZone.classList.remove('drag-over-trash', 'visible');
-        } else if (draggedFamilyName !== null) {
-            // Remove all fonts in family
-            const grouped = groupFontsByFamily(fonts);
-            const familyFonts = grouped[draggedFamilyName] || [];
-            const indicesToRemove = familyFonts.map(f => f.index).sort((a, b) => b - a);
-            
-            // Remove in reverse order to maintain indices
-            indicesToRemove.forEach(idx => {
-                fonts.splice(idx, 1);
-            });
-            
-            // Update selectedIndices
-            selectedIndices.clear();
-            
-            renderFontList();
-            updateComparison();
-            trashZone.classList.remove('drag-over-trash', 'visible');
-        }
-    });
-    
     return trashZone;
 }
-
-// Trash zone handles removal via its own drop handler
-// No need for document-level drag handlers anymore
 
 function toggleSelection(index, event) {
     // Prevent event from bubbling if needed
@@ -2238,7 +2586,7 @@ function updateComparison() {
     activeFeatures = newActiveFeatures;
 
     comparisonGrid.className = 'comparison-grid';
-    comparisonGrid.classList.add(`${viewMode}-mode`);
+    comparisonGrid.setAttribute('data-view-mode', viewMode);
 
     if (viewMode === 'horizontal') {
         // Horizontal mode: single column, each font is a row
@@ -2258,7 +2606,20 @@ function updateComparison() {
         }
     }
 
-    fontFaceStyleElements.forEach(el => el.remove());
+    // Clean up style elements from map first
+    fontFaceStyleMap.forEach(info => {
+        if (info.styleElement && info.styleElement.parentNode) {
+            info.styleElement.remove();
+        }
+    });
+    fontFaceStyleMap.clear();
+    
+    // Clean up any remaining style elements
+    fontFaceStyleElements.forEach(el => {
+        if (el.parentNode) {
+            el.remove();
+        }
+    });
     fontFaceStyleElements = [];
 
     comparisonGrid.innerHTML = '';
@@ -2280,47 +2641,62 @@ function updateComparison() {
     }
     
     const fontUrls = [];
-    let loadedCount = 0;
 
     selectedFonts.forEach((fontData, columnIndex) => {
-        if (!fontData || !fontData.file) {
-            console.warn('Invalid font data at index:', columnIndex);
+        if (!fontData) {
+            if (DEBUG) console.warn('Invalid font data at index:', columnIndex);
+            fontUrls[columnIndex] = null;
             return;
         }
         
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            fontUrls[columnIndex] = e.target.result;
-            loadedCount++;
-
-            if (loadedCount === selectedFonts.length) {
-                renderComparison(selectedFonts, fontUrls);
-            }
-        };
-        reader.onerror = function(error) {
-            console.error('Error reading font file:', error);
-            loadedCount++;
-            // Continue even if one font fails
-            if (loadedCount === selectedFonts.length) {
-                renderComparison(selectedFonts, fontUrls);
-            }
-        };
-        reader.readAsDataURL(fontData.file);
+        // Use cached Data URL if available (performance optimization)
+        if (fontData.dataUrl) {
+            fontUrls[columnIndex] = fontData.dataUrl;
+        } else if (fontData.file) {
+            // Fallback: create Data URL if not cached (for backward compatibility)
+            // This should rarely happen, but handle it gracefully
+            const fallbackUrl = URL.createObjectURL(fontData.file);
+            fontData.dataUrl = fallbackUrl; // Store for cleanup
+            fontUrls[columnIndex] = fallbackUrl;
+        } else {
+            fontUrls[columnIndex] = null;
+        }
     });
+
+    // All URLs are ready immediately (no async file reading needed)
+                renderComparison(selectedFonts, fontUrls);
 }
 
 function renderComparison(selectedFonts, fontUrls) {
+    // Track which font-face names are used in this render
+    const usedFontFaceNames = new Map();
+    
     selectedFonts.forEach((fontData, columnIndex) => {
-        const fontFaceName = `comparison-font-${columnIndex}`;
+        const dataUrl = fontUrls[columnIndex];
+        if (!dataUrl) return;
+        
+        // Check if we already have a font-face style for this dataUrl
+        let fontFaceInfo = fontFaceStyleMap.get(dataUrl);
+        
+        if (!fontFaceInfo) {
+            // Create new font-face style
+            const fontFaceName = `comparison-font-${fontData.id || `font-${columnIndex}`}`;
         const fontFaceStyle = document.createElement('style');
         fontFaceStyle.textContent = `
             @font-face {
                 font-family: '${fontFaceName}';
-                src: url('${fontUrls[columnIndex]}');
+                    src: url('${dataUrl}');
             }
         `;
         document.head.appendChild(fontFaceStyle);
         fontFaceStyleElements.push(fontFaceStyle);
+            
+            fontFaceInfo = { styleElement: fontFaceStyle, fontFaceName: fontFaceName };
+            fontFaceStyleMap.set(dataUrl, fontFaceInfo);
+        }
+        
+        // Track which font-face name to use for this column
+        usedFontFaceNames.set(columnIndex, fontFaceInfo.fontFaceName);
     });
 
     selectedFonts.forEach((fontData, columnIndex) => {
@@ -2328,7 +2704,8 @@ function renderComparison(selectedFonts, fontUrls) {
         column.className = 'font-column';
         column.dataset.columnIndex = columnIndex;
 
-        const fontFaceName = `comparison-font-${columnIndex}`;
+        // Use the font-face name from the map (matches the @font-face rule we created)
+        const fontFaceName = usedFontFaceNames.get(columnIndex) || `comparison-font-${columnIndex}`;
         const isInVariableMode = variableMode.has(columnIndex);
 
         // Initialize variations for this column if not exists
@@ -2344,7 +2721,7 @@ function renderComparison(selectedFonts, fontUrls) {
             ? `vf-badge ${isInVariableMode ? 'vf-badge-active' : ''}`
             : '';
         const vfBadgeHtml = fontData.isVariable 
-            ? `<span class="${vfBadgeClass}" data-column-index="${columnIndex}" title="Variable Font - Click to toggle controls">VF</span>`
+            ? `<span class="${vfBadgeClass}" data-column-index="${columnIndex}" title="Variable Font - Click to toggle controls" tabindex="0" role="button" aria-label="Toggle variable font controls" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleVariableMode(${columnIndex}, event);}">VF</span>`
             : '';
         
         // Create OT badge if font has OpenType features
@@ -2353,7 +2730,7 @@ function renderComparison(selectedFonts, fontUrls) {
             ? `ot-badge ${isInOTMode ? 'ot-badge-active' : ''}`
             : '';
         const otBadgeHtml = fontData.hasOpenTypeFeatures 
-            ? `<span class="${otBadgeClass}" data-column-index="${columnIndex}" title="OpenType Features - Click to toggle controls">O</span>`
+            ? `<span class="${otBadgeClass}" data-column-index="${columnIndex}" title="OpenType Features - Click to toggle controls" tabindex="0" role="button" aria-label="Toggle OpenType features" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleOpenTypeMode(${columnIndex}, event);}">O</span>`
             : '';
         
         // Determine which content to show based on view mode
@@ -2383,10 +2760,16 @@ function renderComparison(selectedFonts, fontUrls) {
             </div>
 
             <div class="preview-section">
+                <div class="preview-text-wrapper">
                 <div class="preview-text preview-text-${columnIndex}" 
                      contenteditable="true" 
                      style="font-family: '${fontFaceName}';"
-                     data-column-index="${columnIndex}"></div>
+                         data-column-index="${columnIndex}"
+                         data-max-length="500"></div>
+                    <div class="preview-text-counter" data-column-index="${columnIndex}">
+                        <span class="char-count">0</span>/<span class="char-limit">500</span>
+                    </div>
+                </div>
                 <button class="preview-reset-btn" 
                         data-column-index="${columnIndex}"
                         title="Reset preview text to default"
@@ -2398,10 +2781,38 @@ function renderComparison(selectedFonts, fontUrls) {
 
         comparisonGrid.appendChild(column);
         
+        // Add data-position attributes for CSS specificity simplification
+        const header = column.querySelector('.font-column-header');
+        if (header) {
+            header.setAttribute('data-position', 'top');
+        }
+        
+        // Mark last metadata section for border radius
+        const metadataSections = column.querySelectorAll('.metadata-section');
+        if (metadataSections.length > 0) {
+            const lastSection = metadataSections[metadataSections.length - 1];
+            lastSection.setAttribute('data-position', 'bottom');
+        }
+        
         // Set preview text content (use textContent to avoid HTML issues)
         const previewElement = column.querySelector('.preview-text');
         if (previewElement) {
-            previewElement.textContent = previewText;
+            // Enforce character limit
+            const maxLength = parseInt(previewElement.dataset.maxLength) || 500;
+            const limitedText = previewText.length > maxLength ? previewText.substring(0, maxLength) : previewText;
+            previewElement.textContent = limitedText;
+            
+            // Update character counter
+            const counter = column.querySelector('.preview-text-counter .char-count');
+            if (counter) {
+                counter.textContent = limitedText.length;
+                const counterParent = counter.parentElement;
+                if (limitedText.length >= maxLength) {
+                    counterParent.classList.add('at-limit');
+                } else {
+                    counterParent.classList.remove('at-limit');
+                }
+            }
         }
 
         // Apply current variations if in variable mode
@@ -2415,7 +2826,7 @@ function renderComparison(selectedFonts, fontUrls) {
         header.onclick = () => {
             toggleSection(header);
             // Re-align rows after section toggle
-            setTimeout(alignMetadataRows, 100);
+            debouncedAlignMetadataRows();
         };
     });
 
@@ -2441,7 +2852,7 @@ function renderComparison(selectedFonts, fontUrls) {
     attachVariableControlHandlers();
 
            // Align rows across columns
-           setTimeout(alignMetadataRows, 50);
+           debouncedAlignMetadataRows();
            
            // Apply active features to preview
            selectedFonts.forEach((fontData, columnIndex) => {
@@ -2455,6 +2866,110 @@ function renderComparison(selectedFonts, fontUrls) {
            attachFeaturePopoverHandlers();
        }
 
+// Attach popover handlers for feature items (hover tooltips)
+function attachFeaturePopoverHandlers() {
+    document.querySelectorAll('.feature-item').forEach(item => {
+        // Remove existing handlers to avoid duplicates
+        item.onmouseenter = null;
+        item.onmouseleave = null;
+        
+        item.onmouseenter = (e) => {
+            const popover = item.querySelector('.feature-popover');
+            if (popover) {
+                popover.style.display = 'block';
+            }
+        };
+        
+        item.onmouseleave = (e) => {
+            const popover = item.querySelector('.feature-popover');
+            if (popover) {
+                popover.style.display = 'none';
+            }
+        };
+    });
+}
+
+// Sync preview text to all preview panes from single source of truth
+function syncPreviewTextToAllPanes(sourceElement = null) {
+    // Clear any pending sync
+    if (previewTextSyncTimeout) {
+        clearTimeout(previewTextSyncTimeout);
+    }
+    
+    // Debounce the sync to prevent cursor jumping
+    previewTextSyncTimeout = setTimeout(() => {
+        document.querySelectorAll('.preview-text[contenteditable="true"]').forEach(preview => {
+            // Don't update the source element
+            if (preview === sourceElement) return;
+            
+            // Store cursor position if element has focus
+            const hadFocus = document.activeElement === preview;
+            let selection = null;
+            if (hadFocus && window.getSelection && window.getSelection().rangeCount > 0) {
+                const range = window.getSelection().getRangeAt(0);
+                const preCaretRange = range.cloneRange();
+                preCaretRange.selectNodeContents(preview);
+                preCaretRange.setEnd(range.endContainer, range.endOffset);
+                selection = preCaretRange.toString().length;
+            }
+            
+            // Update from single source of truth
+            const maxLength = parseInt(preview.dataset.maxLength) || 500;
+            const limitedText = previewText.length > maxLength ? previewText.substring(0, maxLength) : previewText;
+            preview.textContent = limitedText;
+            
+            // Update character counter
+            const previewColumnIndex = parseInt(preview.dataset.columnIndex);
+            const counter = document.querySelector(`.preview-text-counter[data-column-index="${previewColumnIndex}"] .char-count`);
+            if (counter) {
+                counter.textContent = limitedText.length;
+                const counterParent = counter.parentElement;
+                if (limitedText.length >= maxLength) {
+                    counterParent.classList.add('at-limit');
+                } else {
+                    counterParent.classList.remove('at-limit');
+                }
+            }
+            
+            // Restore cursor position if element had focus
+            if (hadFocus && selection !== null) {
+                try {
+                    const range = document.createRange();
+                    const sel = window.getSelection();
+                    let charIndex = 0;
+                    const nodeStack = [preview];
+                    let node, foundStart = false;
+                    
+                    while (!foundStart && (node = nodeStack.pop())) {
+                        if (node.nodeType === Node.TEXT_NODE) {
+                            const nextCharIndex = charIndex + node.textContent.length;
+                            if (!foundStart && selection >= charIndex && selection <= nextCharIndex) {
+                                range.setStart(node, selection - charIndex);
+                                range.setEnd(node, selection - charIndex);
+                                foundStart = true;
+                            }
+                            charIndex = nextCharIndex;
+                        } else {
+                            let i = node.childNodes.length;
+                            while (i--) {
+                                nodeStack.push(node.childNodes[i]);
+                            }
+                        }
+                    }
+                    
+                    if (foundStart) {
+                        sel.removeAllRanges();
+                        sel.addRange(range);
+                    }
+                } catch (e) {
+                    // Cursor restoration failed, but that's okay
+                }
+            }
+        });
+        previewTextSyncTimeout = null;
+    }, 50); // 50ms debounce
+       }
+
 // Attach handlers for editable preview panes
 function attachEditablePreviewHandlers() {
     document.querySelectorAll('.preview-text[contenteditable="true"]').forEach(preview => {
@@ -2463,21 +2978,54 @@ function attachEditablePreviewHandlers() {
         preview.dataset.hasListener = 'true';
         
         preview.addEventListener('input', (e) => {
-            // Get text content and preserve line breaks
-            const text = e.target.innerText;
+            // Get text content using textContent for more reliable extraction
+            // textContent preserves line breaks better than innerText
+            let text = e.target.textContent || '';
+            
+            // Enforce character limit (500 chars)
+            const maxLength = parseInt(e.target.dataset.maxLength) || 500;
+            if (text.length > maxLength) {
+                text = text.substring(0, maxLength);
+                e.target.textContent = text;
+                // Move cursor to end
+                const range = document.createRange();
+                const sel = window.getSelection();
+                range.selectNodeContents(e.target);
+                range.collapse(false);
+                sel.removeAllRanges();
+                sel.addRange(range);
+            }
+            
+            // Update character counter
+            const columnIndex = parseInt(e.target.dataset.columnIndex);
+            const counter = document.querySelector(`.preview-text-counter[data-column-index="${columnIndex}"] .char-count`);
+            if (counter) {
+                counter.textContent = text.length;
+                if (text.length >= maxLength) {
+                    counter.parentElement.classList.add('at-limit');
+                } else {
+                    counter.parentElement.classList.remove('at-limit');
+                }
+            }
+            
+            // Update single source of truth
             previewText = text;
             
-            // Sync to all other preview panes
-            document.querySelectorAll('.preview-text[contenteditable="true"]').forEach(otherPreview => {
-                if (otherPreview !== e.target) {
-                    otherPreview.innerText = text;
-                }
-            });
+            // Sync to all other preview panes (debounced)
+            syncPreviewTextToAllPanes(e.target);
         });
         
         preview.addEventListener('blur', (e) => {
-            // Update previewText state when focus is lost
-            previewText = e.target.innerText;
+            // Update previewText state when focus is lost (final sync)
+            const text = e.target.textContent || '';
+            previewText = text;
+            
+            // Final sync without debounce to ensure consistency
+            if (previewTextSyncTimeout) {
+                clearTimeout(previewTextSyncTimeout);
+                previewTextSyncTimeout = null;
+            }
+            syncPreviewTextToAllPanes(e.target);
         });
         
         preview.addEventListener('keydown', (e) => {
@@ -2645,6 +3193,11 @@ function calculateTicks(axis) {
 }
 
 function snapToNearestTick(columnIndex, axisTag, currentValue) {
+    // Check if snapping is enabled
+    if (!snapToTicks) {
+        return currentValue;
+    }
+    
     const selectedFonts = Array.from(selectedIndices).map(i => fonts[i]);
     const fontData = selectedFonts[columnIndex];
     const axis = fontData.variableAxes.find(a => a.tag === axisTag);
@@ -2665,9 +3218,9 @@ function snapToNearestTick(columnIndex, axisTag, currentValue) {
         }
     });
     
-    // Calculate threshold (2-5% of range or fixed value)
+    // Calculate threshold (1-2% of range or fixed value, reduced from 3%)
     const range = axis.max - axis.min;
-    const threshold = Math.max(range * 0.03, axis.tag === 'wght' ? 15 : 2);
+    const threshold = Math.max(range * 0.02, axis.tag === 'wght' ? 10 : 1);
     
     // Snap if within threshold
     if (minDistance <= threshold) {
@@ -2757,7 +3310,13 @@ function createVariableControlsPanel(fontData, columnIndex) {
         <div class="variable-controls-panel" data-column-index="${columnIndex}">
             <div class="variable-controls-header">
                 <h4>Variable Font Controls</h4>
+                <div class="variable-controls-actions">
+                    <label class="snap-toggle-label" title="Snap to tick marks when adjusting sliders">
+                        <input type="checkbox" class="snap-toggle-checkbox" ${snapToTicks ? 'checked' : ''}>
+                        <span>Snap to Ticks</span>
+                    </label>
                 <button class="btn-reset-variations" data-column-index="${columnIndex}">Reset to Defaults</button>
+                </div>
             </div>
             <div class="variable-axes-section">
                 ${axesHtml}
@@ -2783,22 +3342,37 @@ function createOpenTypeFeaturesPanel(fontData, columnIndex) {
             <div class="features-expanded-panel">
                 ${sortedFeatures.length > 0 ? sortedFeatures.map(f => {
                     const featureTag = typeof f === 'string' ? f : f.tag;
-                    const featureInfo = FEATURE_DESCRIPTIONS[featureTag];
-                    const featureName = featureInfo ? featureInfo.name : `OpenType feature: ${featureTag}`;
-                    const featureDescription = featureInfo ? featureInfo.description : '';
+                    
+                    // PRIORITY 1: Use custom label from opentype.js extraction (has UINameID lookup)
+                    let featureName = null;
+                    if (typeof f === 'object' && f.label) {
+                        featureName = f.label;
+                    }
+                    
+                    // PRIORITY 2: Fallback to getFeatureName() (handles static names, ss##, and cv##)
+                    if (!featureName) {
+                        featureName = getFeatureName(featureTag);
+                    }
+                    
                     const isFeatureActive = isActive.has(featureTag);
+                    
+                    // Display format: "tag Friendly Name" (e.g., "ss01 Double-storey a" or "liga Standard Ligatures")
+                    const displayText = `${featureTag} ${featureName}`;
                     
                     return `
                         <div class="feature-expanded-row ${isFeatureActive ? 'active' : ''}" 
                              data-column-index="${columnIndex}" 
                              data-feature-tag="${featureTag}"
-                             onclick="toggleFeature(${columnIndex}, '${featureTag}')">
+                             tabindex="0"
+                             role="button"
+                             aria-label="Toggle ${featureName} feature"
+                             aria-pressed="${isFeatureActive}"
+                             onclick="toggleFeature(${columnIndex}, '${featureTag}')"
+                             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleFeature(${columnIndex}, '${featureTag}');}">
                             <div class="feature-expanded-content">
                                 <div class="feature-expanded-header">
-                                    <span class="feature-expanded-tag">${featureTag}</span>
-                                    <span class="feature-expanded-name">${featureName}</span>
+                                    <span class="feature-expanded-tag">${displayText}</span>
                                 </div>
-                                ${featureDescription ? `<div class="feature-expanded-description">${featureDescription}</div>` : ''}
                             </div>
                         </div>
                     `;
@@ -2823,26 +3397,39 @@ function createOpenTypeFeaturesInVFPanel(fontData, columnIndex) {
             <div class="features-list-panel">
                 ${sortedFeatures.map(f => {
                     const featureTag = typeof f === 'string' ? f : f.tag;
-                    const featureInfo = FEATURE_DESCRIPTIONS[featureTag];
-                    const featureName = featureInfo ? featureInfo.name : `OpenType feature: ${featureTag}`;
-                    const featureDescription = featureInfo ? featureInfo.description : '';
+                    // PRIORITY 1: Use custom label from opentype.js extraction (has UINameID lookup)
+                    let featureName = null;
+                    if (typeof f === 'object' && f.label) {
+                        featureName = f.label;
+                    }
+                    
+                    // PRIORITY 2: Fallback to getFeatureName() (handles static names, ss##, and cv##)
+                    if (!featureName) {
+                        featureName = getFeatureName(featureTag);
+                    }
+                    
                     const isFeatureActive = isActive.has(featureTag);
+                    
+                    // Display format: "tag Friendly Name" (e.g., "ss01 Double-storey a" or "liga Standard Ligatures")
+                    const displayText = `${featureTag} ${featureName}`;
                     
                     // Escape for HTML attributes
                     const escapedName = featureName.replace(/'/g, "\\'").replace(/"/g, '&quot;');
-                    const escapedDescription = featureDescription.replace(/'/g, "\\'").replace(/"/g, '&quot;');
                     
                     return `
                         <div class="feature-item ${isFeatureActive ? 'active' : ''}" 
                              data-column-index="${columnIndex}" 
                              data-feature-tag="${featureTag}"
                              data-feature-name="${escapedName}"
-                             data-feature-description="${escapedDescription}"
-                             onclick="toggleFeature(${columnIndex}, '${featureTag}')">
-                            <span class="feature-tag">${featureTag}</span>
+                             tabindex="0"
+                             role="button"
+                             aria-label="Toggle ${featureName} feature"
+                             aria-pressed="${isFeatureActive}"
+                             onclick="toggleFeature(${columnIndex}, '${featureTag}')"
+                             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleFeature(${columnIndex}, '${featureTag}');}">
+                            <span class="feature-tag">${displayText}</span>
                             <div class="feature-popover">
                                 <div class="feature-popover-name">${featureName}</div>
-                                <div class="feature-popover-description">${featureDescription}</div>
                                 <div class="feature-popover-arrow"></div>
                             </div>
                         </div>
@@ -2864,6 +3451,8 @@ function toggleOpenTypeMode(columnIndex) {
         }
     }
     updateComparison();
+    // Update file list to reflect badge active states
+    renderFontList();
 }
 
 function toggleVariableMode(columnIndex) {
@@ -2878,7 +3467,110 @@ function toggleVariableMode(columnIndex) {
     }
     // Re-render the comparison to update the view
     updateComparison();
+    // Update file list to reflect badge active states
+    renderFontList();
 }
+
+// Helper function to get column index for a font (when selected)
+function getColumnIndexForFont(fontIndex) {
+    if (!selectedIndices.has(fontIndex)) {
+        return null; // Font is not selected, so it has no column
+    }
+    
+    // Get sorted selected indices to find column position
+    const sortedSelected = Array.from(selectedIndices).sort((a, b) => a - b);
+    const columnIndex = sortedSelected.indexOf(fontIndex);
+    
+    return columnIndex >= 0 ? columnIndex : null;
+}
+
+// Toggle variable mode for a font from file list badge
+function toggleVariableModeForFont(fontIndex, event) {
+    if (DEBUG) console.log('toggleVariableModeForFont called:', fontIndex);
+    
+    if (event) {
+        event.stopPropagation();
+        event.preventDefault();
+    }
+    
+    // First, ensure font is selected
+    if (!selectedIndices.has(fontIndex)) {
+        if (DEBUG) console.log('Font not selected, selecting first:', fontIndex);
+        // Select the font first
+        selectedIndices.add(fontIndex);
+        renderFontList();
+        updateComparison();
+        // Wait for comparison to render, then toggle mode
+        setTimeout(() => {
+            const columnIndex = getColumnIndexForFont(fontIndex);
+            if (DEBUG) console.log('Column index after selection:', columnIndex);
+            if (columnIndex !== null) {
+                toggleVariableMode(columnIndex);
+            }
+        }, 50);
+    } else {
+        // Font is already selected, just toggle mode
+        const columnIndex = getColumnIndexForFont(fontIndex);
+        if (DEBUG) console.log('Font already selected, column index:', columnIndex);
+        if (columnIndex !== null) {
+            toggleVariableMode(columnIndex);
+        }
+    }
+}
+
+// Toggle OpenType mode for a font from file list badge
+function toggleOpenTypeModeForFont(fontIndex, event) {
+    if (DEBUG) console.log('toggleOpenTypeModeForFont called:', fontIndex);
+    
+    if (event) {
+        event.stopPropagation();
+        event.preventDefault();
+    }
+    
+    // First, ensure font is selected
+    if (!selectedIndices.has(fontIndex)) {
+        if (DEBUG) console.log('Font not selected, selecting first:', fontIndex);
+        // Select the font first
+        selectedIndices.add(fontIndex);
+        renderFontList();
+        updateComparison();
+        // Wait for comparison to render, then toggle mode
+        // Use requestAnimationFrame for better timing
+        requestAnimationFrame(() => {
+            setTimeout(() => {
+                const columnIndex = getColumnIndexForFont(fontIndex);
+                if (DEBUG) console.log('Column index after selection:', columnIndex, 'selectedIndices:', Array.from(selectedIndices));
+                if (columnIndex !== null && columnIndex >= 0) {
+                    toggleOpenTypeMode(columnIndex);
+                } else {
+                    console.warn('Could not find column index for font:', fontIndex);
+                }
+            }, 100);
+        });
+    } else {
+        // Font is already selected, get column index and toggle mode immediately
+        const columnIndex = getColumnIndexForFont(fontIndex);
+        if (DEBUG) console.log('Font already selected, column index:', columnIndex, 'otMode:', Array.from(otMode), 'selectedIndices:', Array.from(selectedIndices));
+        
+        if (columnIndex !== null && columnIndex >= 0) {
+            // Toggle the mode - this will update the comparison and re-render the font list
+            toggleOpenTypeMode(columnIndex);
+        } else {
+            if (DEBUG) console.warn('Could not find column index for font:', fontIndex, 'selectedIndices:', Array.from(selectedIndices));
+            // Fallback: try to find the column by checking all selected fonts
+            const sortedSelected = Array.from(selectedIndices).sort((a, b) => a - b);
+            const foundIndex = sortedSelected.indexOf(fontIndex);
+            if (foundIndex >= 0) {
+                if (DEBUG) console.log('Found column index via fallback:', foundIndex);
+                toggleOpenTypeMode(foundIndex);
+            }
+        }
+    }
+}
+
+// Make functions globally accessible
+window.toggleVariableModeForFont = toggleVariableModeForFont;
+window.toggleOpenTypeModeForFont = toggleOpenTypeModeForFont;
 
 function updateFontVariation(columnIndex, variations) {
     const previewElement = document.querySelector(`.preview-text-${columnIndex}`);
@@ -2925,8 +3617,54 @@ function attachVariableControlHandlers() {
             checkAndSyncPreset(columnIndex);
         });
         
-        // Add mouseup handler for snapping to ticks
+        // Add mouseup handler for snapping to ticks (only if snapping is enabled)
+        // Add keyup handler for arrow keys to enable snap-to-ticks
+        slider.addEventListener('keyup', (e) => {
+            if (!snapToTicks) return;
+            if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+            
+            const columnIndex = parseInt(e.target.closest('.variable-axis-control').dataset.columnIndex);
+            const axisTag = e.target.closest('.variable-axis-control').dataset.axisTag;
+            const currentValue = parseFloat(e.target.value);
+            
+            // Snap to nearest tick
+            const snappedValue = snapToNearestTick(columnIndex, axisTag, currentValue);
+            
+            if (snappedValue !== currentValue) {
+                // Update slider value
+                e.target.value = snappedValue;
+                
+                // Update input field
+                const inputId = e.target.id.replace('-slider', '-input');
+                const input = document.getElementById(inputId);
+                if (input) {
+                    const selectedFonts = Array.from(selectedIndices).map(i => fonts[i]);
+                    const fontData = selectedFonts[columnIndex];
+                    const axis = fontData.variableAxes.find(a => a.tag === axisTag);
+                    if (axis) {
+                        input.value = formatAxisValue(snappedValue, axis);
+                    } else {
+                        input.value = snappedValue;
+                    }
+                }
+                
+                // Update variations
+                if (!currentVariations[columnIndex]) {
+                    currentVariations[columnIndex] = {};
+                }
+                currentVariations[columnIndex][axisTag] = snappedValue;
+                
+                // Apply to preview
+                updateFontVariation(columnIndex, currentVariations[columnIndex]);
+                
+                // Check and sync preset
+                checkAndSyncPreset(columnIndex);
+            }
+        });
+        
         slider.addEventListener('mouseup', (e) => {
+            if (!snapToTicks) return;
+            
             const columnIndex = parseInt(e.target.closest('.variable-axis-control').dataset.columnIndex);
             const axisTag = e.target.closest('.variable-axis-control').dataset.axisTag;
             const currentValue = parseFloat(e.target.value);
@@ -3007,8 +3745,61 @@ function attachVariableControlHandlers() {
             checkAndSyncPreset(columnIndex);
         });
         
-        // Add blur handler to snap to tick when input loses focus
+        // Add keydown handler for arrow keys to enable snap-to-ticks (only if snapping is enabled)
+        input.addEventListener('keydown', (e) => {
+            if (!snapToTicks) return;
+            
+            // Only handle arrow keys
+            if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+            
+            // Let the default behavior update the value first, then snap
+            setTimeout(() => {
+                const columnIndex = parseInt(e.target.closest('.variable-axis-control').dataset.columnIndex);
+                const axisTag = e.target.closest('.variable-axis-control').dataset.axisTag;
+                const currentValue = parseFloat(e.target.value);
+                
+                // Snap to nearest tick
+                const snappedValue = snapToNearestTick(columnIndex, axisTag, currentValue);
+                
+                if (snappedValue !== currentValue) {
+                    // Get axis for formatting
+                    const selectedFonts = Array.from(selectedIndices).map(i => fonts[i]);
+                    const fontData = selectedFonts[columnIndex];
+                    const axis = fontData.variableAxes.find(a => a.tag === axisTag);
+                    
+                    // Update input with formatted value
+                    if (axis) {
+                        e.target.value = formatAxisValue(snappedValue, axis);
+                    } else {
+                        e.target.value = snappedValue;
+                    }
+                    
+                    // Update slider
+                    const sliderId = e.target.id.replace('-input', '-slider');
+                    const slider = document.getElementById(sliderId);
+                    if (slider) {
+                        slider.value = snappedValue;
+                    }
+                    
+                    // Update variations
+                    if (!currentVariations[columnIndex]) {
+                        currentVariations[columnIndex] = {};
+                    }
+                    currentVariations[columnIndex][axisTag] = snappedValue;
+                    
+                    // Apply to preview
+                    updateFontVariation(columnIndex, currentVariations[columnIndex]);
+                    
+                    // Check and sync preset
+                    checkAndSyncPreset(columnIndex);
+                }
+            }, 0);
+        });
+        
+        // Add blur handler to snap to tick when input loses focus (only if snapping is enabled)
         input.addEventListener('blur', (e) => {
+            if (!snapToTicks) return;
+            
             const columnIndex = parseInt(e.target.closest('.variable-axis-control').dataset.columnIndex);
             const axisTag = e.target.closest('.variable-axis-control').dataset.axisTag;
             const currentValue = parseFloat(e.target.value);
@@ -3099,6 +3890,19 @@ function attachVariableControlHandlers() {
             resetVariations(columnIndex);
         });
     });
+    
+    // Snap toggle checkbox
+    document.querySelectorAll('.snap-toggle-checkbox').forEach(checkbox => {
+        checkbox.addEventListener('change', (e) => {
+            snapToTicks = e.target.checked;
+            localStorage.setItem('fontAnalyzer_snapToTicks', snapToTicks.toString());
+            
+            // Update all snap toggles across all panels
+            document.querySelectorAll('.snap-toggle-checkbox').forEach(cb => {
+                cb.checked = snapToTicks;
+            });
+        });
+    });
 }
 
 function checkAndSyncPreset(columnIndex) {
@@ -3183,6 +3987,18 @@ function resetVariations(columnIndex) {
     checkAndSyncPreset(columnIndex);
 }
 
+// Debounced version of alignMetadataRows for performance
+let alignMetadataRowsTimeout = null;
+function debouncedAlignMetadataRows() {
+    if (alignMetadataRowsTimeout) {
+        clearTimeout(alignMetadataRowsTimeout);
+    }
+    alignMetadataRowsTimeout = setTimeout(() => {
+        alignMetadataRows();
+        alignMetadataRowsTimeout = null;
+    }, 100);
+}
+
 function alignMetadataRows() {
     // Get all columns
     const columns = document.querySelectorAll('.font-column');
@@ -3234,9 +4050,9 @@ function createSection(title, rows, columnIndex) {
 
     return `
         <div class="metadata-section">
-            <div class="section-header" data-section="${title}">
+            <div class="section-header" data-section="${title}" tabindex="0" role="button" aria-label="Toggle ${title} section" aria-expanded="${!isCollapsed}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection(this);}">
                 <span>${title}</span>
-                <span class="section-toggle ${isCollapsed ? 'collapsed' : ''}">▼</span>
+                <span class="section-toggle ${isCollapsed ? 'collapsed' : ''}" aria-hidden="true">▼</span>
             </div>
             <div class="section-content ${isCollapsed ? 'collapsed' : ''}" id="${sectionId}">
                 ${rows.map(([label, value, rowId]) => `
@@ -3346,7 +4162,7 @@ function createFeaturesSection(features, columnIndex) {
 
     return `
         <div class="metadata-section">
-            <div class="section-header" data-section="OpenType Features">
+            <div class="section-header" data-section="OpenType Features" tabindex="0" role="button" aria-label="Toggle OpenType Features section" aria-expanded="${!isCollapsed}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection(this);}">
                 <span>OpenType Features (${featureCount})</span>
                 <span class="section-toggle ${isCollapsed ? 'collapsed' : ''}">▼</span>
             </div>
@@ -3355,26 +4171,35 @@ function createFeaturesSection(features, columnIndex) {
                     <div class="features-list">
                         ${sortedFeatures.map(f => {
                             const featureTag = typeof f === 'string' ? f : f.tag;
-                            const featureInfo = FEATURE_DESCRIPTIONS[featureTag];
-                            const featureName = featureInfo ? featureInfo.name : `OpenType feature: ${featureTag}`;
-                            const featureDescription = featureInfo ? featureInfo.description : '';
+                            
+                            // PRIORITY 1: Use custom label from opentype.js extraction (has UINameID lookup)
+                            let featureName = null;
+                            if (typeof f === 'object' && f.label) {
+                                featureName = f.label;
+                            }
+                            
+                            // PRIORITY 2: Fallback to FEATURE_NAMES (Microsoft spec friendly names)
+                            if (!featureName) {
+                                featureName = FEATURE_NAMES[featureTag] || `OpenType feature: ${featureTag}`;
+                            }
+                            
                             const isFeatureActive = isActive.has(featureTag);
+                            
+                            // Display format: "tag Friendly Name" (e.g., "ss01 Double-storey a" or "liga Standard Ligatures")
+                            const displayText = `${featureTag} ${featureName}`;
                             
                             // Escape for HTML attributes
                             const escapedName = featureName.replace(/'/g, "\\'").replace(/"/g, '&quot;');
-                            const escapedDescription = featureDescription.replace(/'/g, "\\'").replace(/"/g, '&quot;');
                             
                             return `
                                 <div class="feature-item ${isFeatureActive ? 'active' : ''}" 
                                      data-column-index="${columnIndex}" 
                                      data-feature-tag="${featureTag}"
                                      data-feature-name="${escapedName}"
-                                     data-feature-description="${escapedDescription}"
                                      onclick="toggleFeature(${columnIndex}, '${featureTag}')">
-                                    <span class="feature-tag">${featureTag}</span>
+                                    <span class="feature-tag">${displayText}</span>
                                     <div class="feature-popover">
                                         <div class="feature-popover-name">${featureName}</div>
-                                        <div class="feature-popover-description">${featureDescription}</div>
                                         <div class="feature-popover-arrow"></div>
                                     </div>
                                 </div>
@@ -3399,7 +4224,7 @@ function createVariableAxesSection(axes, columnIndex) {
 
     return `
         <div class="metadata-section">
-            <div class="section-header" data-section="Variable Axes">
+            <div class="section-header" data-section="Variable Axes" tabindex="0" role="button" aria-label="Toggle Variable Axes section" aria-expanded="${!isCollapsed}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection(this);}">
                 <span>Variable Axes (${axes.length})</span>
                 <span class="section-toggle ${isCollapsed ? 'collapsed' : ''}">▼</span>
             </div>
@@ -3421,7 +4246,7 @@ function createTablesSection(tables, columnIndex) {
 
     return `
         <div class="metadata-section">
-            <div class="section-header" data-section="Font Tables">
+            <div class="section-header" data-section="Font Tables" tabindex="0" role="button" aria-label="Toggle Font Tables section" aria-expanded="${!isCollapsed}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection(this);}">
                 <span>Font Tables (${tables.length})</span>
                 <span class="section-toggle ${isCollapsed ? 'collapsed' : ''}">▼</span>
             </div>
@@ -3522,7 +4347,7 @@ function initSidebarResize() {
         
         // Re-align rows if fonts are displayed
         if (selectedIndices.size > 0) {
-            alignMetadataRows();
+            debouncedAlignMetadataRows();
         }
     }
 
