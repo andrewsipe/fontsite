@@ -1,25 +1,192 @@
+/* ============================================
+   FONTSITE 2.0 - FONT ANALYZER
+   Organized into clear sections for maintainability
+   ============================================ */
+
 // Debug flag - set to true to enable verbose console logging
 const DEBUG = false;
 
-// Application state - using global variables for simplicity
-let fonts = [];
-let selectedIndices = new Set();
-let collapsedSections = new Set();
-let variableMode = new Set(); // Column indices in variable mode
-let otMode = new Set(); // Column indices in OpenType features mode
-let expandedFamilies = new Set(); // Which family groups are expanded
-let currentVariations = {}; // Track axis values per column: { columnIndex: { "wght": 400, ... } }
-let activeFeatures = {}; // Track active features per column: { columnIndex: Set(['liga', 'kern']) }
-let viewMode = localStorage.getItem('fontAnalyzer_viewMode') || 'column'; // 'column', 'gallery', or 'horizontal'
-let horizontalMetadataFields = JSON.parse(localStorage.getItem('fontAnalyzer_horizontalFields') || '["family", "subfamily", "glyphs", "weightClass", "format", "size"]');
-let snapToTicks = localStorage.getItem('fontAnalyzer_snapToTicks') !== 'false'; // Default to true
-let familyOrder = []; // Custom order for family groups
+/* ============================================
+   MODULE: ICONS
+   (Organized as if this were js/icons.js)
+   Tabler Icons helper function for consistent icon usage
+   ============================================ */
 
-// UI state
-let fontFaceStyleElements = [];
-// Map to track font-face styles by dataUrl for reuse
-const fontFaceStyleMap = new Map(); // dataUrl -> { styleElement, fontFaceName }
-let lastDirectoryHandle = null;
+/**
+ * Tabler Icons SVG paths
+ * Source: https://tabler.io/icons
+ */
+const iconPaths = {
+    'typography': '<path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M4 20l3 0" /><path d="M14 20l7 0" /><path d="M6.9 15l6.9 0" /><path d="M10.2 6.3l5.8 13.7" /><path d="M5 20l6 -16l2 0l7 16" />',
+    'file-typography': '<path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M14 3v4a1 1 0 0 0 1 1h4" /><path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z" /><path d="M11 18h2" /><path d="M12 18v-7" /><path d="M9 12v-1h6v1" />',
+    'layout-columns': '<path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M4 4m0 2a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2z" /><path d="M12 4l0 16" />',
+    'layout-rows': '<path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M4 4m0 2a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2z" /><path d="M4 12l16 0" />',
+    'layout-grid': '<path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M4 4m0 1a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1z" /><path d="M14 4m0 1a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1z" /><path d="M4 14m0 1a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1z" /><path d="M14 14m0 1a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1z" />',
+    'folder-open': '<path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M5 19l2.757 -7.351a1 1 0 0 1 .936 -.649h12.307a1 1 0 0 1 .986 1.164l-.996 5.211a2 2 0 0 1 -1.964 1.625h-14.026a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2h4l3 3h7a2 2 0 0 1 2 2v2" />',
+    'grip-vertical': '<path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M9 5m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M9 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M9 19m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M15 5m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M15 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M15 19m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />',
+    'check': '<path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M5 12l5 5l10 -10" />'
+};
+
+/**
+ * Generate inline SVG icon HTML
+ * @param {string} name - Icon name (e.g., 'typography', 'layout-columns')
+ * @param {Object} options - Icon options
+ * @param {string} options.size - Icon size (default: '1em')
+ * @param {string} options.color - Icon color (default: 'currentColor')
+ * @param {string} options.class - Additional CSS classes
+ * @param {number} options.strokeWidth - Stroke width (default: 2)
+ * @returns {string} - HTML string for the SVG icon
+ */
+function icon(name, options = {}) {
+    const size = options.size;
+    const className = options.class || '';
+    
+    if (!iconPaths[name]) {
+        console.warn(`Icon "${name}" not found`);
+        return '';
+    }
+    
+    // If size is provided, use inline style; otherwise rely on CSS 1em default
+    const sizeStyle = size ? `width: ${size}; height: ${size};` : '';
+    return `<svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-${name} ${className}" style="${sizeStyle}" viewBox="0 0 24 24" aria-hidden="true">${iconPaths[name]}</svg>`;
+}
+
+/* ============================================
+   MODULE: STATE MANAGEMENT
+   (Organized as if this were js/state.js)
+   Centralized state object and state management functions
+   ============================================ */
+
+/**
+ * Create initial application state
+ * @returns {Object} Initial state object
+ */
+function createState() {
+    return {
+        // Font data
+        fonts: [],
+        
+        // Selection - array maintains order, easier to work with than Set
+        selected: [], // Array of font indices
+        
+        // Column states - each column has mode, variations, features
+        columns: {}, // columnIndex -> { 
+                      //   mode: 'normal'|'variable'|'opentype', 
+                      //   variations: {}, 
+                      //   features: Set(),
+                      //   highlight: false // Future: comparison highlighting
+                      // }
+        
+        // View settings
+        view: {
+            mode: localStorage.getItem('fontAnalyzer_viewMode') || 'column', // 'column', 'gallery', 'horizontal'
+            sidebarWidth: parseInt(localStorage.getItem('fontAnalyzer_sidebarWidth')) || 350,
+            // Future: preview settings, theme, focus mode
+        },
+        
+        // UI state
+        ui: {
+            collapsedSections: new Set(),
+            expandedFamilies: new Set(),
+            horizontalMetadataFields: JSON.parse(localStorage.getItem('fontAnalyzer_horizontalFields') || '["family", "subfamily", "glyphs", "weightClass", "format", "size"]'),
+            snapToTicks: localStorage.getItem('fontAnalyzer_snapToTicks') !== 'false', // Default to true
+            familyOrder: [], // Custom order for family groups
+            // Future: glyph viewer state
+        },
+        
+        // Internal state (not part of user-facing state)
+        _internal: {
+            fontFaceStyleElements: [],
+            fontFaceStyleMap: new Map(), // dataUrl -> { styleElement, fontFaceName }
+            lastDirectoryHandle: null,
+        },
+        
+        // Future feature state hooks (commented for now, will be uncommented as features are added):
+        // preview: { size: 'auto', waterfall: false, sampleText: 'default' },
+        // theme: { mode: 'auto', tint: null, contrast: 1.0 },
+        // glyphViewer: { active: false, search: '', filter: 'all', selected: null },
+        // focus: { active: false, target: null }
+    };
+}
+
+// Initialize state
+let state = createState();
+
+/**
+ * Get current state (read-only access)
+ * @returns {Object} Current state object
+ */
+function getState() {
+    return state;
+}
+
+/**
+ * Update state immutably
+ * @param {Object|Function} updates - Object with updates or function that returns updates
+ */
+function updateState(updates) {
+    if (typeof updates === 'function') {
+        state = { ...state, ...updates(state) };
+    } else {
+        state = { ...state, ...updates };
+    }
+    // Trigger render (will be connected to render functions)
+    if (typeof render === 'function') {
+        render();
+    }
+}
+
+/**
+ * Get column state for a specific column index
+ * @param {number} columnIndex - Column index
+ * @returns {Object} Column state object
+ */
+function getColumnState(columnIndex) {
+    if (!state.columns[columnIndex]) {
+        state.columns[columnIndex] = {
+            mode: 'normal',
+            variations: {},
+            features: new Set(),
+            highlight: false
+        };
+    }
+    return state.columns[columnIndex];
+}
+
+/**
+ * Update column state immutably
+ * @param {number} columnIndex - Column index
+ * @param {Object} updates - Updates to apply to column state
+ */
+function updateColumnState(columnIndex, updates) {
+    const currentColumn = getColumnState(columnIndex);
+    state.columns[columnIndex] = { ...currentColumn, ...updates };
+    // Deep copy Sets and objects that need to be immutable
+    if (updates.features !== undefined) {
+        state.columns[columnIndex].features = new Set(updates.features);
+    }
+    if (updates.variations !== undefined) {
+        state.columns[columnIndex].variations = { ...updates.variations };
+    }
+}
+
+// Legacy state variables for backward compatibility during migration
+// These will be removed once all code is migrated to use state object
+let fonts = state.fonts;
+let selectedIndices = new Set(state.selected);
+let collapsedSections = state.ui.collapsedSections;
+let variableMode = new Set();
+let otMode = new Set();
+let expandedFamilies = state.ui.expandedFamilies;
+let currentVariations = {};
+let activeFeatures = {};
+let viewMode = state.view.mode;
+let horizontalMetadataFields = state.ui.horizontalMetadataFields;
+let snapToTicks = state.ui.snapToTicks;
+let familyOrder = state.ui.familyOrder;
+let fontFaceStyleElements = state._internal.fontFaceStyleElements;
+const fontFaceStyleMap = state._internal.fontFaceStyleMap;
+let lastDirectoryHandle = state._internal.lastDirectoryHandle;
 
 // OpenType feature friendly names from Microsoft OpenType spec
 // Source: https://learn.microsoft.com/en-us/typography/opentype/spec/featurelist
@@ -188,6 +355,7 @@ function getFeatureName(tag) {
     return `OpenType feature: ${tag}`;
 }
 
+// DOM element references
 const fileInput = document.createElement('input');
 fileInput.type = 'file';
 fileInput.className = 'file-input';
@@ -206,23 +374,25 @@ const sidebar = document.getElementById('sidebar');
 const resizeHandle = document.getElementById('resizeHandle');
 const clearAllBtn = document.getElementById('clearAllBtn');
 
-// Preview text state (replaces textarea)
+// Preview text state
 const defaultPreviewText = `The quick brown fox
 ABCDEFGHIJKLM
 abcdefghijklm
 0123456789`;
 let previewText = defaultPreviewText;
-let previewTextSyncTimeout = null; // For debouncing sync operations
+let previewState = null;
 
-// Check if File System Access API is supported
+// Browser capability detection
 const isFileSystemAccessAPISupported = 'showDirectoryPicker' in window;
 
-// Show browser compatibility message if File System Access API is not available
 if (!isFileSystemAccessAPISupported) {
-    // Note: This is informational only - the app still works with file selection
-    // Directory selection requires Chrome/Edge 86+ or Safari 15.2+
     console.info('File System Access API not available. Directory selection will use traditional file picker.');
 }
+
+/* ============================================
+   SECTION 6: EVENT HANDLERS
+   Event coordination and handlers
+   ============================================ */
 
 // Drag and drop handlers - make entire sidebar a drop zone
 sidebar.addEventListener('dragover', (e) => {
@@ -541,18 +711,11 @@ window.browseFonts = browseFonts;
 // Reset preview text function
 function resetPreviewText(columnIndex = null) {
     previewText = defaultPreviewText;
-    // Update all preview panes from single source of truth
-    syncPreviewTextToAllPanes();
-    
-    // Update all character counters
-    document.querySelectorAll('.preview-text-counter').forEach(counter => {
-        const colIdx = parseInt(counter.dataset.columnIndex);
-        const charCount = counter.querySelector('.char-count');
-        if (charCount) {
-            charCount.textContent = previewText.length;
-            counter.classList.remove('at-limit');
-        }
-    });
+    // Update hidden textarea (single source of truth)
+    if (previewState) {
+        previewState.value = defaultPreviewText;
+        syncPreviews();
+    }
 }
 
 // Make resetPreviewText globally accessible
@@ -579,115 +742,6 @@ document.addEventListener('keydown', (e) => {
     }
 }, false);
 
-// Export functions
-function toggleExportMenu() {
-    const menu = document.getElementById('exportMenu');
-    if (menu) {
-        menu.style.display = menu.style.display === 'none' ? 'flex' : 'none';
-    }
-}
-
-function exportAsImage() {
-    showStatus('Image export requires html2canvas library. Please add it to use this feature.', 'info');
-    // Note: html2canvas would need to be added as a dependency for this to work
-}
-
-function exportMetadataJSON() {
-    if (selectedIndices.size === 0) {
-        showStatus('No fonts selected to export', 'error');
-        return;
-    }
-    
-    const selectedFonts = Array.from(selectedIndices).map(idx => fonts[idx]);
-    const exportData = selectedFonts.map(font => ({
-        filename: font.filename,
-        family: font.family,
-        subfamily: font.subfamily,
-        fullName: font.fullName,
-        postscriptName: font.postscriptName,
-        glyphs: font.glyphs,
-        weightClass: font.weightClass,
-        widthClass: font.widthClass,
-        format: font.format,
-        size: font.size,
-        isVariable: font.isVariable,
-        variableAxes: font.variableAxes,
-        hasOpenTypeFeatures: font.hasOpenTypeFeatures,
-        features: font.features?.map(f => typeof f === 'string' ? f : f.tag) || []
-    }));
-    
-    const json = JSON.stringify(exportData, null, 2);
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `font-metadata-${Date.now()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    showStatus('Metadata exported as JSON', 'success');
-}
-
-function exportMetadataCSV() {
-    if (selectedIndices.size === 0) {
-        showStatus('No fonts selected to export', 'error');
-        return;
-    }
-    
-    const selectedFonts = Array.from(selectedIndices).map(idx => fonts[idx]);
-    const headers = ['Filename', 'Family', 'Subfamily', 'Full Name', 'Glyphs', 'Weight Class', 'Format', 'Size', 'Variable', 'OpenType Features'];
-    const rows = selectedFonts.map(font => [
-        font.filename,
-        font.family,
-        font.subfamily,
-        font.fullName,
-        font.glyphs,
-        font.weightClass,
-        font.format,
-        font.size,
-        font.isVariable ? 'Yes' : 'No',
-        (font.features?.map(f => typeof f === 'string' ? f : f.tag).join('; ') || 'None')
-    ]);
-    
-    const csv = [
-        headers.join(','),
-        ...rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
-    ].join('\n');
-    
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `font-metadata-${Date.now()}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-    showStatus('Metadata exported as CSV', 'success');
-}
-
-function copyFontInfo() {
-    if (selectedIndices.size === 0) {
-        showStatus('No fonts selected to copy', 'error');
-        return;
-    }
-    
-    const selectedFonts = Array.from(selectedIndices).map(idx => fonts[idx]);
-    const text = selectedFonts.map(font => 
-        `${font.filename}\nFamily: ${font.family}\nSubfamily: ${font.subfamily}\nGlyphs: ${font.glyphs}\nWeight: ${font.weightClass}\nFormat: ${font.format}\nSize: ${font.size}`
-    ).join('\n\n');
-    
-    navigator.clipboard.writeText(text).then(() => {
-        showStatus('Font info copied to clipboard', 'success');
-    }).catch(err => {
-        showStatus('Failed to copy to clipboard', 'error');
-        console.error('Copy error:', err);
-    });
-}
-
-// Make export functions globally accessible
-window.toggleExportMenu = toggleExportMenu;
-window.exportAsImage = exportAsImage;
-window.exportMetadataJSON = exportMetadataJSON;
-window.exportMetadataCSV = exportMetadataCSV;
-window.copyFontInfo = copyFontInfo;
 
 // View mode toggle functions
 function setViewMode(mode) {
@@ -761,6 +815,7 @@ window.setViewMode = setViewMode;
 window.addEventListener('resize', () => {
     if (selectedIndices.size > 0) {
         debouncedAlignMetadataRows();
+        debouncedAlignColumnHeaders();
         // Re-render in gallery mode to update column count
         if (viewMode === 'gallery') {
             updateComparison();
@@ -803,7 +858,18 @@ async function processDirectoryRecursively(directoryHandle) {
     return fontFiles;
 }
 
+/* ============================================
+   SECTION 2: FONT LOADING
+   Font file loading, parsing, and metadata extraction
+   ============================================ */
+
 async function handleFiles(fileList) {
+    // Early check: Ensure opentype.js is loaded
+    if (typeof opentype === 'undefined') {
+        showStatus('Font analyzer libraries failed to load. Please refresh the page.', 'error');
+        return;
+    }
+    
     const files = Array.from(fileList).filter(file => {
         const ext = file.name.toLowerCase();
         return ext.endsWith('.ttf') || ext.endsWith('.otf') ||
@@ -889,7 +955,13 @@ async function handleFiles(fileList) {
             const arrayBuffer = await file.arrayBuffer();
             
             // Use fontkit for metrics and general font info
-            const fontkitFont = fontkit.create(arrayBuffer);
+            let fontkitFont;
+            try {
+                fontkitFont = fontkit.create(arrayBuffer);
+            } catch (fontkitError) {
+                console.error(`Error creating fontkit font for ${file.name}:`, fontkitError);
+                throw new Error(`Failed to parse font file: ${fontkitError.message}`);
+            }
             
             // Use opentype.js for OpenType feature extraction (more reliable)
             let opentypeFont = null;
@@ -939,20 +1011,26 @@ async function handleFiles(fileList) {
             }
 
             // Extract comprehensive metadata using fontkit
-            const metadata = extractMetadata(fontkitFont, file);
+            let metadata;
+            try {
+                metadata = extractMetadata(fontkitFont, file);
+            } catch (metadataError) {
+                console.error(`Error extracting metadata for ${file.name}:`, metadataError);
+                throw new Error(`Failed to extract metadata: ${metadataError.message}`);
+            }
             
             // Override features with opentype.js results
             metadata.features = features;
             metadata.hasOpenTypeFeatures = features && features.length > 0;
 
-            // Cache Data URL for performance (avoid re-reading file on every comparison render)
-            const dataUrl = URL.createObjectURL(file);
+            // Create object URL once for performance (avoid re-reading file on every comparison render)
+            const objectUrl = URL.createObjectURL(file);
 
             fonts.push({
                 id: `font_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                 ...metadata,
-                // Don't store font objects or file blob - only keep extracted metadata and dataUrl
-                dataUrl: dataUrl, // Cached object URL for font file
+                // Don't store font objects or file blob - only keep extracted metadata and objectUrl
+                objectUrl: objectUrl, // Cached object URL for font file
                 assignedFamily: null // User-assigned family override
             });
             
@@ -960,6 +1038,8 @@ async function handleFiles(fileList) {
             updateProgress();
         } catch (error) {
             // Collect error for summary instead of showing immediately
+            console.error(`Error processing font ${file.name}:`, error);
+            console.error('Error stack:', error.stack);
             failedFonts.push({ name: file.name, error: error.message });
             // Still update progress even on error
             updateProgress();
@@ -1169,6 +1249,11 @@ function interpretFsType(fsType) {
     return restrictions.length > 0 ? restrictions.join(', ') : 'Installable';
 }
 
+/* ============================================
+   SECTION 2: FONT LOADING (continued)
+   Metadata extraction and font parsing
+   ============================================ */
+
 function extractMetadata(font, file) {
     const tables = font._src?.tables || {};
     const name = font.name;
@@ -1272,23 +1357,49 @@ function extractMetadata(font, file) {
         features: features,
         hasOpenTypeFeatures: hasOpenTypeFeatures,
 
-        // Variable font info
-        variableAxes: extractVariableAxes(font),
-        isVariable: isVariableFont(font),
-        namedVariations: extractNamedVariations(font)
+        // Variable font info - wrap in try-catch to prevent errors from breaking font loading
+        variableAxes: (() => {
+            try {
+                return extractVariableAxes(font);
+            } catch (error) {
+                console.warn('Error extracting variable axes in extractMetadata:', error);
+                return [];
+            }
+        })(),
+        isVariable: (() => {
+            try {
+                return isVariableFont(font);
+            } catch (error) {
+                console.warn('Error checking if font is variable:', error);
+                return false;
+            }
+        })(),
+        namedVariations: (() => {
+            try {
+                return extractNamedVariations(font);
+            } catch (error) {
+                console.warn('Error extracting named variations in extractMetadata:', error);
+                return [];
+            }
+        })()
     };
 }
 
 // Helper function to check if font is variable
 function isVariableFont(font) {
     if (!font) return false;
-    // Check if variationAxes exists and has entries
-    if (font.variationAxes && Object.keys(font.variationAxes).length > 0) {
-        return true;
+    try {
+        // Check if variationAxes exists and has entries
+        if (font.variationAxes && Object.keys(font.variationAxes).length > 0) {
+            return true;
+        }
+        // Fallback: check for fvar table
+        const tables = font._src?.tables || {};
+        return tables.fvar !== undefined;
+    } catch (error) {
+        console.warn('Error checking if font is variable:', error);
+        return false;
     }
-    // Fallback: check for fvar table
-    const tables = font._src?.tables || {};
-    return tables.fvar !== undefined;
 }
 
 // Helper function to extract and clean family name
@@ -1442,84 +1553,15 @@ function debugFontStructure(font) {
 
 // Helper function to look up name from opentype.js name table
 function lookupOpentypeName(opentypeFont, nameID) {
-    if (!nameID || nameID === 0) return null;
+    if (!nameID || nameID < 256) return null;
     
-    try {
-        // Method 1: Try font.names object (most common structure in opentype.js v1.3+)
-        // Structure: font.names = { 256: { en: "Alternate Digits" }, ... }
-        if (opentypeFont.names && typeof opentypeFont.names === 'object') {
-            // Direct numeric key access
-            if (opentypeFont.names[nameID]) {
-                const nameEntry = opentypeFont.names[nameID];
-                
-                // If it's an object with language keys
-                if (typeof nameEntry === 'object') {
-                    // Try English variants first
-                    if (nameEntry.en) return String(nameEntry.en);
-                    if (nameEntry['en-US']) return String(nameEntry['en-US']);
-                    if (nameEntry['en-GB']) return String(nameEntry['en-GB']);
-                    
-                    // Get first available language
-                    const keys = Object.keys(nameEntry);
-                    if (keys.length > 0) {
-                        return String(nameEntry[keys[0]]);
-                    }
-                }
-                
-                // If it's a string directly
-                if (typeof nameEntry === 'string') {
-                    return nameEntry;
-                }
-            }
-        }
+    // opentype.js stores names at font.names[nameID]
+    if (opentypeFont.names && opentypeFont.names[nameID]) {
+        const record = opentypeFont.names[nameID];
         
-        // Method 2: Try font.tables.name.names array (alternative structure)
-        if (opentypeFont.tables && opentypeFont.tables.name && 
-            opentypeFont.tables.name.names && 
-            Array.isArray(opentypeFont.tables.name.names)) {
-            
-            const nameRecord = opentypeFont.tables.name.names.find(n => 
-                n && n.nameID === nameID
-            );
-            
-            if (nameRecord) {
-                // Try different property names
-                if (nameRecord.value) return String(nameRecord.value);
-                if (nameRecord.string) return String(nameRecord.string);
-                if (nameRecord.text) return String(nameRecord.text);
-                
-                // Try language-specific access
-                if (nameRecord.en) return String(nameRecord.en);
-                if (nameRecord['en-US']) return String(nameRecord['en-US']);
-            }
-        }
-        
-        // Method 3: Try accessing via get() method (some opentype.js versions)
-        if (opentypeFont.names && typeof opentypeFont.names.get === 'function') {
-            try {
-                const name = opentypeFont.names.get(nameID);
-                if (name) return String(name);
-            } catch (e) {
-                // get() method might not exist or fail
-            }
-        }
-        
-        // Method 4: Try array structure (older opentype.js versions)
-        if (opentypeFont.names && Array.isArray(opentypeFont.names)) {
-            const nameRecord = opentypeFont.names.find(n => n && n.nameID === nameID);
-            if (nameRecord) {
-                if (nameRecord.en) return String(nameRecord.en);
-                if (nameRecord['en-US']) return String(nameRecord['en-US']);
-                if (nameRecord['en-GB']) return String(nameRecord['en-GB']);
-                const languages = Object.keys(nameRecord).filter(k => k !== 'nameID');
-                if (languages.length > 0) {
-                    return String(nameRecord[languages[0]]);
-                }
-            }
-        }
-        
-    } catch (e) {
-        console.warn(`Error looking up name ID ${nameID}:`, e);
+        // Try different language codes
+        return record.en || record['en-US'] || record['en-GB'] ||
+               Object.values(record)[0]; // First available
     }
     
     return null;
@@ -1613,20 +1655,28 @@ function extractFeaturesFromOpentype(opentypeFont, fontkitFont = null) {
                         }
                         
                         if (params) {
-                            if (typeof params === 'number' && params > 0 && params >= 256) {
+                            if (typeof params === 'number' && params >= 256) {
                                 // Only use if it's a valid name ID (>= 256 for user-defined)
                                 uinameid = params;
                             } else if (typeof params === 'object') {
-                                uinameid = params.uiNameID || 
-                                          params.UINameID || 
-                                          (params.value && typeof params.value === 'number' && params.value >= 256 ? params.value : null);
+                                // UINameID is stored directly as uiNameID, UINameID, or uinameid
+                                uinameid = params.uiNameID || params.UINameID || params.uinameid;
+                                // Must be a valid nameID (number >= 256, typically)
+                                if (typeof uinameid === 'number' && uinameid >= 256) {
+                                    // Valid - will use it
+                                } else {
+                                    uinameid = null;
+                                }
                             }
                         }
                     }
                     
                     // Look up the name using opentype.js (better name table access)
-                    if (uinameid && typeof uinameid === 'number' && uinameid > 0) {
+                    if (uinameid && typeof uinameid === 'number' && uinameid >= 256) {
                         label = lookupOpentypeName(opentypeFont, uinameid);
+                        if (!label) {
+                            console.warn(`UINameID ${uinameid} found for ${tag} but name lookup failed`);
+                        }
                     }
                     
                     // Fallback to getFeatureName() (handles static names, ss##, and cv##)
@@ -1888,24 +1938,32 @@ function extractOpenTypeFeatures(font) {
 }
 
 function extractVariableAxes(font) {
-    if (font.variationAxes) {
-        return Object.entries(font.variationAxes).map(([tag, axis]) => ({
-            tag,
-            name: axis.name || tag,
-            min: axis.min,
-            max: axis.max,
-            default: axis.default
-        }));
+    try {
+        if (font && font.variationAxes) {
+            return Object.entries(font.variationAxes).map(([tag, axis]) => ({
+                tag,
+                name: axis.name || tag,
+                min: axis.min,
+                max: axis.max,
+                default: axis.default
+            }));
+        }
+    } catch (error) {
+        console.warn('Error extracting variable axes:', error);
     }
     return [];
 }
 
 function extractNamedVariations(font) {
-    if (font.namedVariations) {
-        return Object.entries(font.namedVariations).map(([name, coordinates]) => ({
-            name,
-            coordinates
-        }));
+    try {
+        if (font && font.namedVariations) {
+            return Object.entries(font.namedVariations).map(([name, coordinates]) => ({
+                name,
+                coordinates
+            }));
+        }
+    } catch (error) {
+        console.warn('Error extracting named variations:', error);
     }
     return [];
 }
@@ -1921,13 +1979,18 @@ function formatFileSize(bytes) {
     return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
 }
 
+/* ============================================
+   SECTION 3: RENDERING
+   UI rendering functions (comparison grid, font list, etc.)
+   ============================================ */
+
 function renderFontList() {
     fontList.innerHTML = '';
 
     // Empty state
     if (fonts.length === 0) {
         fontList.innerHTML = `
-            <div class="font-list-browse"><button class="btn" onclick="browseFonts(event)">🇫 Browse Fonts</button></div>
+            <div class="font-list-browse"><button class="btn" onclick="browseFonts(event)">${icon('folder-open')} Browse Fonts</button></div>
             <div class="empty-state">
                 <h4>NO FONTS LOADED</h4>
                 <small>Drag and Drop Fonts Here</small>
@@ -1938,7 +2001,7 @@ function renderFontList() {
     }
 
     // Add browse button at top
-    let html = '<div class="font-list-browse"><button class="btn" onclick="browseFonts(event)">🇫 Browse Fonts</button></div>';
+    let html = `<div class="font-list-browse"><button class="btn" onclick="browseFonts(event)">${icon('folder-open')} Browse Fonts</button></div>`;
     
     // Group fonts by family
     const grouped = groupFontsByFamily(fonts);
@@ -1981,7 +2044,7 @@ function renderFontList() {
                 <div class="font-family-header" 
                      data-family-name="${escapeHtml(family)}"
                      onclick="toggleFamily('${escapeHtml(family)}')">
-                    <span class="family-drag-handle" title="Drag to reorder or remove">⋮⋮</span>
+                    <span class="family-drag-handle" title="Drag to reorder or remove">${icon('grip-vertical')}</span>
                     <span class="family-arrow" onclick="event.stopPropagation(); toggleFamily('${escapeHtml(family)}')">${arrow}</span>
                     <input type="checkbox" class="family-toggle" ${allSelected ? 'checked' : ''} ${someSelected && !allSelected ? 'indeterminate' : ''} onclick="event.stopPropagation(); toggleFamilySelection('${escapeHtml(family)}', event)" title="Toggle all fonts in family">
                     <span class="family-name">${escapeHtml(family)}</span>
@@ -2012,8 +2075,9 @@ function renderFontItem(fontData, index) {
     // Generate badges with click handlers and active states
     let badgesHtml = '';
     if (fontData.isVariable) {
-        const vfActiveClass = isInVariableMode ? ' vf-badge-active' : '';
-        badgesHtml += `<span class="font-list-badge vf-badge${vfActiveClass}" 
+        const vfActiveClass = isInVariableMode ? ' badge-active' : '';
+        badgesHtml += `<span class="badge badge-font-list badge-vf${vfActiveClass}" 
+                             aria-label="Variable Font: ${fontData.family}" 
                              title="Variable Font - Click to toggle controls"
                              data-font-index="${index}"
                              tabindex="0"
@@ -2023,8 +2087,8 @@ function renderFontItem(fontData, index) {
                              onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleVariableModeForFont(${index}, event);}">VF</span>`;
     }
     if (fontData.hasOpenTypeFeatures) {
-        const otActiveClass = isInOTMode ? ' ot-badge-active' : '';
-        badgesHtml += `<span class="font-list-badge ot-badge${otActiveClass}" 
+        const otActiveClass = isInOTMode ? ' badge-active' : '';
+        badgesHtml += `<span class="badge badge-font-list badge-ot${otActiveClass}" 
                              title="OpenType Features - Click to toggle controls"
                              data-font-index="${index}"
                              tabindex="0"
@@ -2039,7 +2103,7 @@ function renderFontItem(fontData, index) {
              data-font-index="${index}" 
              data-font-id="${fontData.id}"
              onclick="toggleSelection(${index}, event)">
-            <span class="font-drag-handle" title="Drag to reorder or remove">⋮⋮</span>
+            <span class="font-drag-handle" title="Drag to reorder or remove">${icon('grip-vertical')}</span>
             ${badgesHtml}
             <span class="font-name">${escapeHtml(fontData.filename)}</span>
             
@@ -2050,8 +2114,8 @@ function renderFontItem(fontData, index) {
 function removeFont(index) {
     // Revoke object URL to prevent memory leak
     const fontData = fonts[index];
-    if (fontData && fontData.dataUrl && fontData.dataUrl.startsWith('blob:')) {
-        URL.revokeObjectURL(fontData.dataUrl);
+    if (fontData && fontData.objectUrl) {
+        URL.revokeObjectURL(fontData.objectUrl);
     }
     
     // Remove from fonts array
@@ -2134,8 +2198,8 @@ function removeFont(index) {
 function clearAllFonts() {
     // Revoke all object URLs to prevent memory leaks
     fonts.forEach(fontData => {
-        if (fontData.dataUrl && fontData.dataUrl.startsWith('blob:')) {
-            URL.revokeObjectURL(fontData.dataUrl);
+        if (fontData.objectUrl) {
+            URL.revokeObjectURL(fontData.objectUrl);
         }
     });
     
@@ -2649,15 +2713,9 @@ function updateComparison() {
             return;
         }
         
-        // Use cached Data URL if available (performance optimization)
-        if (fontData.dataUrl) {
-            fontUrls[columnIndex] = fontData.dataUrl;
-        } else if (fontData.file) {
-            // Fallback: create Data URL if not cached (for backward compatibility)
-            // This should rarely happen, but handle it gracefully
-            const fallbackUrl = URL.createObjectURL(fontData.file);
-            fontData.dataUrl = fallbackUrl; // Store for cleanup
-            fontUrls[columnIndex] = fallbackUrl;
+        // Use cached object URL (created once when font was loaded)
+        if (fontData.objectUrl) {
+            fontUrls[columnIndex] = fontData.objectUrl;
         } else {
             fontUrls[columnIndex] = null;
         }
@@ -2718,19 +2776,19 @@ function renderComparison(selectedFonts, fontUrls) {
         }
 
         const vfBadgeClass = fontData.isVariable 
-            ? `vf-badge ${isInVariableMode ? 'vf-badge-active' : ''}`
+            ? `badge badge-vf ${isInVariableMode ? 'badge-active' : ''}`
             : '';
         const vfBadgeHtml = fontData.isVariable 
-            ? `<span class="${vfBadgeClass}" data-column-index="${columnIndex}" title="Variable Font - Click to toggle controls" tabindex="0" role="button" aria-label="Toggle variable font controls" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleVariableMode(${columnIndex}, event);}">VF</span>`
+            ? `<span class="${vfBadgeClass}" data-column-index="${columnIndex}" title="Variable Font - Click to toggle controls" tabindex="0" role="button" aria-label="Variable Font: ${fontData.family}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleVariableMode(${columnIndex}, event);}">VF</span>`
             : '';
         
         // Create OT badge if font has OpenType features
         const isInOTMode = otMode.has(columnIndex);
         const otBadgeClass = fontData.hasOpenTypeFeatures 
-            ? `ot-badge ${isInOTMode ? 'ot-badge-active' : ''}`
+            ? `badge badge-ot ${isInOTMode ? 'badge-active' : ''}`
             : '';
         const otBadgeHtml = fontData.hasOpenTypeFeatures 
-            ? `<span class="${otBadgeClass}" data-column-index="${columnIndex}" title="OpenType Features - Click to toggle controls" tabindex="0" role="button" aria-label="Toggle OpenType features" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleOpenTypeMode(${columnIndex}, event);}">O</span>`
+            ? `<span class="${otBadgeClass}" data-column-index="${columnIndex}" title="OpenType Features - Click to toggle controls" tabindex="0" role="button" aria-label="OpenType Features: ${fontData.family}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleOpenTypeMode(${columnIndex}, event);}">O</span>`
             : '';
         
         // Determine which content to show based on view mode
@@ -2769,11 +2827,11 @@ function renderComparison(selectedFonts, fontUrls) {
                     <div class="preview-text-counter" data-column-index="${columnIndex}">
                         <span class="char-count">0</span>/<span class="char-limit">500</span>
                     </div>
+                    <button class="preview-reset-btn" 
+                            data-column-index="${columnIndex}"
+                            title="Reset preview text to default"
+                            onclick="resetPreviewText()">Reset</button>
                 </div>
-                <button class="preview-reset-btn" 
-                        data-column-index="${columnIndex}"
-                        title="Reset preview text to default"
-                        onclick="resetPreviewText()">Reset</button>
             </div>
 
             ${contentHtml}
@@ -2827,11 +2885,13 @@ function renderComparison(selectedFonts, fontUrls) {
             toggleSection(header);
             // Re-align rows after section toggle
             debouncedAlignMetadataRows();
+            // Headers shouldn't change from section toggles, but align anyway for safety
+            debouncedAlignColumnHeaders();
         };
     });
 
     // Attach VF badge click handlers
-    document.querySelectorAll('.vf-badge').forEach(badge => {
+    document.querySelectorAll('.badge-vf').forEach(badge => {
         badge.onclick = (e) => {
             e.stopPropagation();
             const columnIndex = parseInt(badge.dataset.columnIndex);
@@ -2840,7 +2900,7 @@ function renderComparison(selectedFonts, fontUrls) {
     });
     
     // Attach OT badge click handlers
-    document.querySelectorAll('.ot-badge').forEach(badge => {
+    document.querySelectorAll('.badge-ot').forEach(badge => {
         badge.onclick = (e) => {
             e.stopPropagation();
             const columnIndex = parseInt(badge.dataset.columnIndex);
@@ -2853,6 +2913,9 @@ function renderComparison(selectedFonts, fontUrls) {
 
            // Align rows across columns
            debouncedAlignMetadataRows();
+           
+           // Align headers across columns
+           debouncedAlignColumnHeaders();
            
            // Apply active features to preview
            selectedFonts.forEach((fontData, columnIndex) => {
@@ -2889,33 +2952,18 @@ function attachFeaturePopoverHandlers() {
     });
 }
 
-// Sync preview text to all preview panes from single source of truth
-function syncPreviewTextToAllPanes(sourceElement = null) {
-    // Clear any pending sync
-    if (previewTextSyncTimeout) {
-        clearTimeout(previewTextSyncTimeout);
-    }
+// Sync preview text to all preview panes from single source of truth (hidden textarea)
+function syncPreviews() {
+    if (!previewState) return;
     
-    // Debounce the sync to prevent cursor jumping
-    previewTextSyncTimeout = setTimeout(() => {
-        document.querySelectorAll('.preview-text[contenteditable="true"]').forEach(preview => {
-            // Don't update the source element
-            if (preview === sourceElement) return;
-            
-            // Store cursor position if element has focus
-            const hadFocus = document.activeElement === preview;
-            let selection = null;
-            if (hadFocus && window.getSelection && window.getSelection().rangeCount > 0) {
-                const range = window.getSelection().getRangeAt(0);
-                const preCaretRange = range.cloneRange();
-                preCaretRange.selectNodeContents(preview);
-                preCaretRange.setEnd(range.endContainer, range.endOffset);
-                selection = preCaretRange.toString().length;
-            }
-            
-            // Update from single source of truth
+    const text = previewState.value;
+    previewText = text;
+    
+    // Update all previews from single source (only if not focused)
+    document.querySelectorAll('.preview-text[contenteditable="true"]').forEach(preview => {
+        if (document.activeElement !== preview) {
             const maxLength = parseInt(preview.dataset.maxLength) || 500;
-            const limitedText = previewText.length > maxLength ? previewText.substring(0, maxLength) : previewText;
+            const limitedText = text.length > maxLength ? text.substring(0, maxLength) : text;
             preview.textContent = limitedText;
             
             // Update character counter
@@ -2930,48 +2978,28 @@ function syncPreviewTextToAllPanes(sourceElement = null) {
                     counterParent.classList.remove('at-limit');
                 }
             }
-            
-            // Restore cursor position if element had focus
-            if (hadFocus && selection !== null) {
-                try {
-                    const range = document.createRange();
-                    const sel = window.getSelection();
-                    let charIndex = 0;
-                    const nodeStack = [preview];
-                    let node, foundStart = false;
-                    
-                    while (!foundStart && (node = nodeStack.pop())) {
-                        if (node.nodeType === Node.TEXT_NODE) {
-                            const nextCharIndex = charIndex + node.textContent.length;
-                            if (!foundStart && selection >= charIndex && selection <= nextCharIndex) {
-                                range.setStart(node, selection - charIndex);
-                                range.setEnd(node, selection - charIndex);
-                                foundStart = true;
-                            }
-                            charIndex = nextCharIndex;
-                        } else {
-                            let i = node.childNodes.length;
-                            while (i--) {
-                                nodeStack.push(node.childNodes[i]);
-                            }
-                        }
-                    }
-                    
-                    if (foundStart) {
-                        sel.removeAllRanges();
-                        sel.addRange(range);
-                    }
-                } catch (e) {
-                    // Cursor restoration failed, but that's okay
-                }
-            }
-        });
-        previewTextSyncTimeout = null;
-    }, 50); // 50ms debounce
-       }
+        }
+    });
+}
+
+// Initialize hidden textarea for preview state
+function initPreviewState() {
+    if (previewState) return; // Already initialized
+    
+    previewState = document.createElement('textarea');
+    previewState.style.display = 'none';
+    previewState.value = defaultPreviewText;
+    document.body.appendChild(previewState);
+    
+    // Listen to hidden textarea changes
+    previewState.addEventListener('input', syncPreviews);
+}
 
 // Attach handlers for editable preview panes
 function attachEditablePreviewHandlers() {
+    // Initialize preview state if not already done
+    initPreviewState();
+    
     document.querySelectorAll('.preview-text[contenteditable="true"]').forEach(preview => {
         // Check if already has listener (data attribute)
         if (preview.dataset.hasListener === 'true') return;
@@ -3008,11 +3036,11 @@ function attachEditablePreviewHandlers() {
                 }
             }
             
-            // Update single source of truth
-            previewText = text;
-            
-            // Sync to all other preview panes (debounced)
-            syncPreviewTextToAllPanes(e.target);
+            // Update hidden textarea (single source of truth)
+            if (previewState) {
+                previewState.value = text;
+                syncPreviews();
+            }
         });
         
         preview.addEventListener('blur', (e) => {
@@ -3020,12 +3048,11 @@ function attachEditablePreviewHandlers() {
             const text = e.target.textContent || '';
             previewText = text;
             
-            // Final sync without debounce to ensure consistency
-            if (previewTextSyncTimeout) {
-                clearTimeout(previewTextSyncTimeout);
-                previewTextSyncTimeout = null;
+            // Update hidden textarea (single source of truth)
+            if (previewState) {
+                previewState.value = text;
+                syncPreviews();
             }
-            syncPreviewTextToAllPanes(e.target);
         });
         
         preview.addEventListener('keydown', (e) => {
@@ -3056,14 +3083,14 @@ function createHorizontalMetadataPanel(fontData, columnIndex) {
         .filter(field => fieldMap[field])
         .map(field => {
             const [label, value] = fieldMap[field];
-            return `<div class="horizontal-metadata-row">
-                <div class="horizontal-metadata-label">${label}</div>
-                <div class="horizontal-metadata-value">${value || 'N/A'}</div>
+            return `<div class="metadata-row">
+                <div class="metadata-label">${label}</div>
+                <div class="metadata-value">${value || 'N/A'}</div>
             </div>`;
         }).join('');
     
     return `
-        <div class="horizontal-metadata-panel">
+        <div class="metadata-panel">
             ${rows}
         </div>
     `;
@@ -3291,8 +3318,8 @@ function createVariableControlsPanel(fontData, columnIndex) {
     if (namedVariations.length > 0) {
         namedVariationsHtml = `
             <div class="named-variations-section">
-                <div class="section-header">
-                    <span>Preset Styles</span>
+                <div class="controls-header">
+                    <h4>Preset Styles</h4>
                 </div>
                 <div class="section-content">
                     <select class="named-variations-select" data-column-index="${columnIndex}">
@@ -3307,10 +3334,10 @@ function createVariableControlsPanel(fontData, columnIndex) {
     }
 
     return `
-        <div class="variable-controls-panel" data-column-index="${columnIndex}">
-            <div class="variable-controls-header">
+        <div class="controls-panel" data-column-index="${columnIndex}">
+            <div class="controls-header">
                 <h4>Variable Font Controls</h4>
-                <div class="variable-controls-actions">
+                <div class="controls-actions">
                     <label class="snap-toggle-label" title="Snap to tick marks when adjusting sliders">
                         <input type="checkbox" class="snap-toggle-checkbox" ${snapToTicks ? 'checked' : ''}>
                         <span>Snap to Ticks</span>
@@ -3327,6 +3354,11 @@ function createVariableControlsPanel(fontData, columnIndex) {
     `;
 }
 
+/* ============================================
+   SECTION 5: OPENTYPE FEATURES
+   OpenType feature handling and UI
+   ============================================ */
+
 function createOpenTypeFeaturesPanel(fontData, columnIndex) {
     const features = fontData.features || [];
     const isActive = activeFeatures[columnIndex] || new Set();
@@ -3335,11 +3367,11 @@ function createOpenTypeFeaturesPanel(fontData, columnIndex) {
     const sortedFeatures = sortFeatures(features);
     
     return `
-        <div class="variable-controls-panel">
-            <div class="variable-controls-header">
-                <h4>OpenType Features</h4>
+        <div class="controls-panel">
+            <div class="controls-header">
+                <h4>OpenType Features (${features.length})</h4>
             </div>
-            <div class="features-expanded-panel">
+            <div class="features-expanded">
                 ${sortedFeatures.length > 0 ? sortedFeatures.map(f => {
                     const featureTag = typeof f === 'string' ? f : f.tag;
                     
@@ -3356,22 +3388,24 @@ function createOpenTypeFeaturesPanel(fontData, columnIndex) {
                     
                     const isFeatureActive = isActive.has(featureTag);
                     
-                    // Display format: "tag Friendly Name" (e.g., "ss01 Double-storey a" or "liga Standard Ligatures")
-                    const displayText = `${featureTag} ${featureName}`;
+                    // Escape for HTML attributes
+                    const escapedName = featureName.replace(/'/g, "\\'").replace(/"/g, '&quot;');
                     
                     return `
-                        <div class="feature-expanded-row ${isFeatureActive ? 'active' : ''}" 
+                        <div class="feature-row ${isFeatureActive ? 'active' : ''}" 
                              data-column-index="${columnIndex}" 
                              data-feature-tag="${featureTag}"
+                             data-feature-name="${escapedName}"
                              tabindex="0"
                              role="button"
                              aria-label="Toggle ${featureName} feature"
                              aria-pressed="${isFeatureActive}"
                              onclick="toggleFeature(${columnIndex}, '${featureTag}')"
                              onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleFeature(${columnIndex}, '${featureTag}');}">
-                            <div class="feature-expanded-content">
-                                <div class="feature-expanded-header">
-                                    <span class="feature-expanded-tag">${displayText}</span>
+                            <div class="feature-content">
+                                <div class="feature-header">
+                                    <span class="feature-tag">${featureTag}</span>
+                                    <span class="feature-name">${featureName}</span>
                                 </div>
                             </div>
                         </div>
@@ -3392,9 +3426,11 @@ function createOpenTypeFeaturesInVFPanel(fontData, columnIndex) {
     const sortedFeatures = sortFeatures(features);
     
     return `
-        <div class="named-variations-section ot-features-in-vf">
-            <h5>OpenType Features</h5>
-            <div class="features-list-panel">
+        <div class="named-variations-section features-in-vf">
+            <div class="controls-header">
+                <h4>OpenType Features (${features.length})</h4>
+            </div>
+            <div class="features-embedded">
                 ${sortedFeatures.map(f => {
                     const featureTag = typeof f === 'string' ? f : f.tag;
                     // PRIORITY 1: Use custom label from opentype.js extraction (has UINameID lookup)
@@ -3410,9 +3446,6 @@ function createOpenTypeFeaturesInVFPanel(fontData, columnIndex) {
                     
                     const isFeatureActive = isActive.has(featureTag);
                     
-                    // Display format: "tag Friendly Name" (e.g., "ss01 Double-storey a" or "liga Standard Ligatures")
-                    const displayText = `${featureTag} ${featureName}`;
-                    
                     // Escape for HTML attributes
                     const escapedName = featureName.replace(/'/g, "\\'").replace(/"/g, '&quot;');
                     
@@ -3427,7 +3460,8 @@ function createOpenTypeFeaturesInVFPanel(fontData, columnIndex) {
                              aria-pressed="${isFeatureActive}"
                              onclick="toggleFeature(${columnIndex}, '${featureTag}')"
                              onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleFeature(${columnIndex}, '${featureTag}');}">
-                            <span class="feature-tag">${displayText}</span>
+                            <span class="feature-tag">${featureTag}</span>
+                            <span class="feature-name">${featureName}</span>
                             <div class="feature-popover">
                                 <div class="feature-popover-name">${featureName}</div>
                                 <div class="feature-popover-arrow"></div>
@@ -3999,12 +4033,23 @@ function debouncedAlignMetadataRows() {
     }, 100);
 }
 
+let alignColumnHeadersTimeout = null;
+function debouncedAlignColumnHeaders() {
+    if (alignColumnHeadersTimeout) {
+        clearTimeout(alignColumnHeadersTimeout);
+    }
+    alignColumnHeadersTimeout = setTimeout(() => {
+        alignColumnHeaders();
+        alignColumnHeadersTimeout = null;
+    }, 100);
+}
+
 function alignMetadataRows() {
     // Get all columns
     const columns = document.querySelectorAll('.font-column');
     if (columns.length === 0) return;
 
-    // Get all unique row IDs
+    // First, align entire metadata section cards by their row IDs
     const rowIds = new Set();
     columns.forEach(column => {
         column.querySelectorAll('.metadata-row[data-row-id]').forEach(row => {
@@ -4024,10 +4069,9 @@ function alignMetadataRows() {
 
         if (matchingRows.length === 0) return;
 
-        // Find the maximum height
+        // Reset heights
         let maxHeight = 0;
         matchingRows.forEach(row => {
-            // Reset height to auto to get natural height
             row.style.height = 'auto';
             const height = row.offsetHeight;
             if (height > maxHeight) {
@@ -4035,13 +4079,73 @@ function alignMetadataRows() {
             }
         });
 
-        // Set all matching rows to the same height
+        // Apply max height to all matching rows
         if (maxHeight > 0) {
             matchingRows.forEach(row => {
                 row.style.height = `${maxHeight}px`;
             });
         }
     });
+    
+    // NEW: Align metadata section cards themselves
+    // Group sections by their title for alignment
+    const sectionTitles = new Set();
+    columns.forEach(column => {
+        column.querySelectorAll('.metadata-section .section-header').forEach(header => {
+            const title = header.getAttribute('data-section');
+            if (title) sectionTitles.add(title);
+        });
+    });
+    
+    sectionTitles.forEach(title => {
+        const matchingSections = Array.from(document.querySelectorAll(`.metadata-section .section-header[data-section="${title}"]`))
+            .map(header => header.closest('.metadata-section'))
+            .filter(section => section !== null);
+        
+        if (matchingSections.length <= 1) return;
+        
+        // Find tallest section
+        let maxSectionHeight = 0;
+        matchingSections.forEach(section => {
+            section.style.minHeight = 'auto';
+            const height = section.offsetHeight;
+            if (height > maxSectionHeight) {
+                maxSectionHeight = height;
+            }
+        });
+        
+        // Apply to all matching sections (only if expanded)
+        if (maxSectionHeight > 0) {
+            matchingSections.forEach(section => {
+                const content = section.querySelector('.section-content');
+                if (content && !content.classList.contains('collapsed')) {
+                    section.style.minHeight = `${maxSectionHeight}px`;
+                }
+            });
+        }
+    });
+}
+
+function alignColumnHeaders() {
+    const headers = document.querySelectorAll('.font-column-header');
+    if (headers.length === 0) return;
+    
+    // Reset heights
+    let maxHeight = 0;
+    headers.forEach(header => {
+        header.style.height = 'auto';
+        const height = header.offsetHeight;
+        if (height > maxHeight) {
+            maxHeight = height;
+        }
+    });
+    
+    // Apply max height to all headers
+    if (maxHeight > 0) {
+        headers.forEach(header => {
+            header.style.height = `${maxHeight}px`;
+        });
+    }
 }
 
 function createSection(title, rows, columnIndex) {
@@ -4081,12 +4185,12 @@ window.toggleFeature = function(columnIndex, featureTag) {
     
     applyFeaturesToPreview(columnIndex);
     
-    // Update UI to reflect active state (handle both feature-item and feature-expanded-row)
+    // Update UI to reflect active state (handle both feature-item and feature-row)
     const featureItem = document.querySelector(
         `.feature-item[data-column-index="${columnIndex}"][data-feature-tag="${featureTag}"]`
     );
     const featureRow = document.querySelector(
-        `.feature-expanded-row[data-column-index="${columnIndex}"][data-feature-tag="${featureTag}"]`
+        `.feature-row[data-column-index="${columnIndex}"][data-feature-tag="${featureTag}"]`
     );
     
     const isActive = activeFeatures[columnIndex].has(featureTag);
@@ -4168,7 +4272,7 @@ function createFeaturesSection(features, columnIndex) {
             </div>
             <div class="section-content ${isCollapsed ? 'collapsed' : ''}" id="${sectionId}">
                 ${featureCount > 0 ? `
-                    <div class="features-list">
+                    <div class="features-compact">
                         ${sortedFeatures.map(f => {
                             const featureTag = typeof f === 'string' ? f : f.tag;
                             
@@ -4178,15 +4282,12 @@ function createFeaturesSection(features, columnIndex) {
                                 featureName = f.label;
                             }
                             
-                            // PRIORITY 2: Fallback to FEATURE_NAMES (Microsoft spec friendly names)
+                            // PRIORITY 2: Fallback to getFeatureName() (handles static names, ss##, and cv##)
                             if (!featureName) {
-                                featureName = FEATURE_NAMES[featureTag] || `OpenType feature: ${featureTag}`;
+                                featureName = getFeatureName(featureTag);
                             }
                             
                             const isFeatureActive = isActive.has(featureTag);
-                            
-                            // Display format: "tag Friendly Name" (e.g., "ss01 Double-storey a" or "liga Standard Ligatures")
-                            const displayText = `${featureTag} ${featureName}`;
                             
                             // Escape for HTML attributes
                             const escapedName = featureName.replace(/'/g, "\\'").replace(/"/g, '&quot;');
@@ -4197,7 +4298,8 @@ function createFeaturesSection(features, columnIndex) {
                                      data-feature-tag="${featureTag}"
                                      data-feature-name="${escapedName}"
                                      onclick="toggleFeature(${columnIndex}, '${featureTag}')">
-                                    <span class="feature-tag">${displayText}</span>
+                                    <span class="feature-tag">${featureTag}</span>
+                                    <span class="feature-name">${featureName}</span>
                                     <div class="feature-popover">
                                         <div class="feature-popover-name">${featureName}</div>
                                         <div class="feature-popover-arrow"></div>
@@ -4348,6 +4450,7 @@ function initSidebarResize() {
         // Re-align rows if fonts are displayed
         if (selectedIndices.size > 0) {
             debouncedAlignMetadataRows();
+            debouncedAlignColumnHeaders();
         }
     }
 
@@ -4368,13 +4471,44 @@ function initSidebarResize() {
     document.addEventListener('mouseup', stopResize);
 }
 
-// Initialize sidebar resize and font list on page load
+/* ============================================
+   SECTION 7: INITIALIZATION
+   App startup and setup
+   ============================================ */
+
 function initializeApp() {
     initSidebarResize();
     // Ensure fontList element exists before rendering
     if (fontList) {
         renderFontList(); // Initialize font list with browse button
     }
+    
+    // Add global keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+        // Delete key: Remove selected fonts (when not typing in an input)
+        if (e.key === 'Delete' && selectedIndices.size > 0) {
+            const activeElement = document.activeElement;
+            const isInput = activeElement && (
+                activeElement.tagName === 'INPUT' ||
+                activeElement.tagName === 'TEXTAREA' ||
+                activeElement.isContentEditable
+            );
+            
+            // Only handle Delete if not typing in an input
+            if (!isInput) {
+                e.preventDefault();
+                // Remove fonts in descending order to maintain correct indices
+                Array.from(selectedIndices).sort((a, b) => b - a).forEach(index => {
+                    removeFont(index);
+                });
+            }
+        }
+        
+        // Escape key: Close modals/dropdowns
+        if (e.key === 'Escape') {
+            // Escape key handler (for future use)
+        }
+    });
 }
 
 // Load directory handle on startup

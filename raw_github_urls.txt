@@ -1,2 +1,0 @@
-# Root directory
-https://raw.githubusercontent.com/andrewsipe/fontsite/main/README.md
